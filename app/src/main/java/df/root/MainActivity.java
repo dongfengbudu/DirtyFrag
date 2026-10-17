@@ -212,28 +212,28 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         // v4.0 renamed every marker and dropped the "env adopted" / "partitions set
         // ro" confirmations, so these steps are re-keyed to the new table.
         if (t.startsWith("kernel module: launching bootstrap")) {
-            setSeg2(0.14f, "Verification", 0xFFFFFFFF);
+            setSeg2(0.14f, getString(R.string.verification), 0xFFFFFFFF);
         }
         if (t.startsWith("bootstrap: loading app preferences file")) {
-            setSeg2(0.28f, "Verification", 0xFFFFFFFF);
+            setSeg2(0.28f, getString(R.string.verification), 0xFFFFFFFF);
         }
         if (t.startsWith("bootstrap: cloning zygote env")
                 || t.startsWith("bootstrap: WARNING - clone zygote env failed")) {
-            setSeg2(0.42f, "Verification", 0xFFFFFFFF);
+            setSeg2(0.42f, getString(R.string.verification), 0xFFFFFFFF);
         }
         if (t.startsWith("bootstrap: setting partitions ro")
                 || t.startsWith("bootstrap: WARNING - set partitions ro failed")) {
-            setSeg2(0.57f, "Verification", 0xFFFFFFFF);
+            setSeg2(0.57f, getString(R.string.verification), 0xFFFFFFFF);
         }
         if (t.startsWith("bootstrap: disabling ksu modules")) {
-            setSeg2(0.71f, "Verification", 0xFFFFFFFF);
+            setSeg2(0.71f, getString(R.string.verification), 0xFFFFFFFF);
         }
         if (t.startsWith("bootstrap: starting SU daemon")) {
-            setSeg2(0.85f, "Verification", 0xFFFFFFFF);
+            setSeg2(0.85f, getString(R.string.verification), 0xFFFFFFFF);
         }
         if (t.equals("ksud start: SUCCESS")) {
             setSeg1(1f);
-            setSeg2(1f, "Verified", 0xFFFFFFFF);
+            binding.twoStep.setSeg2(1f, getString(R.string.verified), 0xFFFFFFFF, true);
         }
         if (exploitPhase.equals("cleanup") && t.startsWith("restoring")) {
             cleanupSteps++;
@@ -351,31 +351,56 @@ public class MainActivity extends AppCompatActivity implements IReporter {
     }
 
     /** "=== setup ===" -> "SETUP"; "=== exploit (patching files) ===" ->
-     *  "PATCHING"; "=== exploit failed: x ===" -> "EXPLOIT FAILED: X". */
-    private static String stripHeader(String t) {
+     *  "PATCHING"; "=== exploit failed: x ===" -> "EXPLOIT FAILED: X". Raw
+     *  headers are matched in English; the returned display value is localized. */
+    private String stripHeader(String t) {
         java.util.regex.Matcher m = java.util.regex.Pattern
                 .compile("^===\\s*(.*?)\\s*===$").matcher(t);
         if (!m.matches()) return t;
         String h = m.group(1).toUpperCase();
         // The native binary still prints "=== exploit (patching files) ===";
         // the UI shows the short form.
-        if (h.equals("EXPLOIT (PATCHING FILES)")) return "PATCHING";
-        return h;
+        if (h.equals("EXPLOIT (PATCHING FILES)")) return getString(R.string.hdr_patching);
+        switch (h) {
+            case "SETUP":
+                return getString(R.string.hdr_setup);
+            case "INIT":
+                return getString(R.string.hdr_init);
+            case "CLEANUP":
+                return getString(R.string.hdr_cleanup);
+            // Old saved logs keep this exact value, and the stale-header skip
+            // in onCreate compares against it, so it must stay untranslated.
+            case "EXPLOIT SUCCESS":
+                return h;
+            default:
+                if (h.startsWith(getString(R.string.hdr_failed_prefix))) {
+                    // 14 == "EXPLOIT FAILED".length(): everything after it is
+                    // the failure reason.
+                    String reason = h.length() > 14
+                            ? h.substring(14).replaceFirst("^:\\s*", "") : "";
+                    return getString(R.string.hdr_failed, reason);
+                }
+                return h;
+        }
     }
 
     /** The log's first line. Deliberately generic: the device banner that
      *  ExploitRunner prints immediately below it already carries manufacturer,
      *  model, Android version, patch level and kernel version, so the old
-     *  model-prefixed firmware token ("S931BXXU1AYB2") was redundant noise. */
-    private static final String LOG_HEADER = "SYSTEM";
+     *  model-prefixed firmware token ("S931BXXU1AYB2") was redundant noise.
+     *  Initialized in onCreate because it comes from string resources. */
+    private String logHeader;
 
     /** Header lines render big, white and bold; the rest is dimmed. */
     private boolean isHeader(String line) {
-        return line.equals("SETUP") || line.equals("PATCHING")
+        return line.equals(getString(R.string.hdr_setup))
+                || line.equals(getString(R.string.hdr_patching))
+                || line.equals(getString(R.string.hdr_init))
+                || line.equals(getString(R.string.hdr_cleanup))
+                || line.startsWith(getString(R.string.hdr_failed_prefix))
+                // Old saved logs may still contain this untranslated header.
                 || line.equals("EXPLOIT (PATCHING FILES)")
-                || line.equals("INIT") || line.equals("CLEANUP")
-                || line.startsWith("EXPLOIT FAILED")
-                || line.equals(LOG_HEADER);
+                || line.equals(logHeader);
     }
 
     /** Header lines render big, white and bold; the rest is dimmed. */
@@ -451,6 +476,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         mDeCtx = createDeviceProtectedStorageContext();
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+        logHeader = getString(R.string.log_header);
 
         // The header is the app's name and nothing else. The version number that
         // used to ride next to it is still recorded, just not in the one line of
@@ -502,8 +528,8 @@ public class MainActivity extends AppCompatActivity implements IReporter {
                 .getBoolean("disable_modules", false));
         moduleRefresh = false;
         binding.modulesSubtitle.setText(binding.switchModules.isChecked()
-                ? "Enabled - Active at next reroot"
-                : "Disabled - No Modules on reroot");
+                ? getString(R.string.modules_on)
+                : getString(R.string.modules_off));
         binding.switchModules.setOnCheckedChangeListener((btn, on) -> {
             if (moduleRefresh) return;
             btn.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
@@ -552,14 +578,14 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         String last = readLastLog();
         boolean hasLastLog = !last.isEmpty();
         if (hasLastLog) {
-            appendLog(LOG_HEADER);
+            appendLog(logHeader);
             for (String l : last.split("\n")) {
                 String t = stripHeader(l.trim());
                 // Skip stale headers, old result lines and duplicate header lines.
                 if (t.isEmpty()
                         || t.equals("LAST RUN")
                         || t.equals("EXPLOIT SUCCESS")
-                        || t.equals(LOG_HEADER)) {
+                        || t.equals(logHeader)) {
                     continue;
                 }
                 appendLog(t);
@@ -586,7 +612,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
                 && last.toLowerCase().contains("=== exploit failed");
         if (rootedNow || lastSuccess) {
             binding.twoStep.setSeg1(1f, "100%");
-            binding.twoStep.setSeg2(1f, "Verified", 0xFFFFFFFF);
+            binding.twoStep.setSeg2(1f, getString(R.string.verified), 0xFFFFFFFF, true);
         } else if (lastFailed) {
             setFailedState();
         }
@@ -597,14 +623,14 @@ public class MainActivity extends AppCompatActivity implements IReporter {
             if (!runArmed) {
                 runArmed = true;
                 v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-                binding.btnRun.setText("Are you sure");
+                binding.btnRun.setText(getString(R.string.confirm_run));
                 return;
             }
             runArmed = false;
             v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             running = true;
             binding.btnRun.setEnabled(false);
-            binding.btnRun.setText("Running");
+            binding.btnRun.setText(getString(R.string.running));
             // Same dark greyed-out styling as the Rooted state.
             binding.btnRun.setTextColor(0xFF6E6E6E);
             binding.btnRun.setBackgroundTintList(ColorStateList.valueOf(0xFF1F1F1F));
@@ -616,7 +642,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
             createDeviceProtectedStorageContext()
                     .getSharedPreferences("dfroot", MODE_PRIVATE)
                     .edit().putBoolean("last_run_success", false).apply();
-            appendLog(LOG_HEADER);
+            appendLog(logHeader);
             binding.twoStep.reset();
             setCompactButton(true, false);
             updateLogVisibility();
@@ -663,7 +689,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
             // -- Github Page row --
             TextView ghRow = new TextView(this);
             ghRow.setBackgroundResource(R.drawable.menu_row_highlight);
-            ghRow.setText("Github Page");
+            ghRow.setText(getString(R.string.menu_github));
             ghRow.setGravity(android.view.Gravity.CENTER_VERTICAL | android.view.Gravity.START);
             ghRow.setPadding((int) (20 * md), 0, 0, 0);
             ghRow.setTextColor(0xFFE8E8E8);
@@ -681,7 +707,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
             exRow.setPadding((int) (20 * md), 0, 0, 0);
             TextView exText = new TextView(this);
             exRow.setBackgroundResource(R.drawable.menu_row_highlight);
-            exText.setText("Expert Mode");
+            exText.setText(getString(R.string.menu_expert));
             exText.setTextColor(0xFFE8E8E8);
             exText.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
             exRow.addView(exText);
@@ -714,7 +740,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
             //    user hid. --
             TextView rlRow = new TextView(this);
             rlRow.setBackgroundResource(R.drawable.menu_row_highlight);
-            rlRow.setText("Reset layout");
+            rlRow.setText(getString(R.string.reset_layout));
             rlRow.setGravity(android.view.Gravity.CENTER_VERTICAL | android.view.Gravity.START);
             rlRow.setPadding((int) (20 * md), 0, 0, 0);
             rlRow.setTextColor(0xFFE8E8E8);
@@ -827,8 +853,10 @@ public class MainActivity extends AppCompatActivity implements IReporter {
      *  disabled toggles, titles suffixed with (Expert). */
     private void applyExpertMode() {
         boolean ok = expertMode;
-        binding.tvAutorunTitle.setText(ok ? "Autorun" : "Autorun (Expert)");
-        binding.tvRebootTitle.setText(ok ? "Auto reboot" : "Auto reboot (Expert)");
+        binding.tvAutorunTitle.setText(ok ? getString(R.string.autorun)
+                : getString(R.string.autorun_expert));
+        binding.tvRebootTitle.setText(ok ? getString(R.string.auto_reboot)
+                : getString(R.string.auto_reboot_expert));
         binding.tvAutorunTitle.setTextColor(ok ? 0xFFFFFFFF : 0xFF6E6E6E);
         binding.tvAutorunDesc.setTextColor(ok ? 0xFF9E9E9E : 0xFF5A5A5A);
         binding.tvRebootTitle.setTextColor(ok ? 0xFFFFFFFF : 0xFF6E6E6E);
@@ -934,7 +962,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
             b.setImageTintList(ColorStateList.valueOf(0xFF3A3A3C));
             b.setScaleType(android.widget.ImageView.ScaleType.CENTER);
             b.setPadding(0, 0, 0, 0);
-            b.setContentDescription("Hide card");
+            b.setContentDescription(getString(R.string.hide_card));
             // Above the lifted card (18dp), below the menu dim layer (30dp).
             b.setElevation(26 * md);
             b.setVisibility(View.GONE);
@@ -1155,8 +1183,8 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         // The subtitle is the whole message. Nothing is announced over the bottom
         // of the screen for a switch the user can already see move.
         binding.modulesSubtitle.setText(on
-                ? "Enabled - Active at next reroot"
-                : "Disabled - No Modules on reroot");
+                ? getString(R.string.modules_on)
+                : getString(R.string.modules_off));
     }
 
     // ---- SU manager picker --------------------------------------------------
@@ -1206,7 +1234,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
             if (suManagerPkg == null) sp.edit().remove("su_manager").apply();
         }
         binding.suManagerSubtitle.setText(suManagerPkg == null
-                ? "Not selected - required"
+                ? getString(R.string.not_selected)
                 : suManagerLabel + "  (" + suManagerPkg + ")");
         binding.suManagerSubtitle.setTextColor(suManagerPkg == null
                 ? 0xFFE57373 : 0xFF9E9E9E);
@@ -1226,7 +1254,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
 
         if (apps.isEmpty()) {
             TextView none = new TextView(this);
-            none.setText("No app with libksud.so found");
+            none.setText(getString(R.string.no_manager));
             none.setGravity(android.view.Gravity.CENTER_VERTICAL | android.view.Gravity.START);
             none.setPadding((int) (20 * md), (int) (12 * md), (int) (20 * md), (int) (12 * md));
             none.setTextColor(0xFF6E6E6E);
@@ -1353,7 +1381,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         }
         boolean ok = suManagerPkg != null;
         binding.btnRun.setEnabled(ok);
-        binding.btnRun.setText("Run exploit");
+        binding.btnRun.setText(getString(R.string.run_exploit));
         binding.btnRun.setTextColor(ok ? 0xFFE0E0E0 : 0xFF6E6E6E);
         binding.btnRun.setBackgroundTintList(ColorStateList.valueOf(ok ? 0xFF7A7A7A : 0xFF1F1F1F));
         ((com.google.android.material.button.MaterialButton) binding.btnRun)
@@ -1383,7 +1411,8 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         if (word <= 0) {
             // The font failed to load, so no title paint measured the headline. A
             // pill that just fits its own word is honest; a guessed width is not.
-            word = Math.round(binding.updateLabel.getPaint().measureText("Update"));
+            word = Math.round(binding.updateLabel.getPaint()
+                    .measureText(binding.updateLabel.getText().toString()));
         }
         // Wider than the word it replaces. The headline's advance is exactly as wide
         // as a word, and a capsule cut to that reads as a badge clipped to its own
@@ -1519,11 +1548,14 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         box.setBackgroundResource(R.drawable.popup_bg);
         box.setPadding(0, (int) (6 * md), 0, (int) (6 * md));
 
-        box.addView(odinRow("Lockscreen", shown.lockscreenLabel()), odinRowLp(md));
+        box.addView(odinRow(getString(R.string.odin_lockscreen),
+                shown.lockscreen ? getString(R.string.yes) : getString(R.string.no)), odinRowLp(md));
         box.addView(odinSep(md), odinSepLp(md));
-        box.addView(odinRow("Maintenance Mode", shown.maintenanceLabel()), odinRowLp(md));
+        box.addView(odinRow(getString(R.string.odin_maintenance),
+                shown.maintenance ? getString(R.string.state_on) : getString(R.string.state_off)), odinRowLp(md));
         box.addView(odinSep(md), odinSepLp(md));
-        box.addView(odinRow("Device", shown.deviceLabel()), odinRowLp(md));
+        box.addView(odinRow(getString(R.string.odin_device),
+                shown.supported ? getString(R.string.supported) : getString(R.string.unsupported)), odinRowLp(md));
 
         box.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
         int pw_w = Math.max(box.getMeasuredWidth(), (int) (230 * md));
@@ -1632,10 +1664,10 @@ public class MainActivity extends AppCompatActivity implements IReporter {
     private void setFailedState() {
         failedRun = true;
         binding.twoStep.setFailed(true);
-        binding.twoStep.setSeg1(seg1, "Failure");
-        binding.twoStep.setSeg2(1f, "Reboot", 0xFFE57373);
+        binding.twoStep.setSeg1(seg1, getString(R.string.failure));
+        binding.twoStep.setSeg2(1f, getString(R.string.reboot_label), 0xFFE57373);
         binding.btnRun.setEnabled(false);
-        binding.btnRun.setText("Run exploit");
+        binding.btnRun.setText(getString(R.string.run_exploit));
         binding.btnRun.setTextColor(0xFF6E6E6E);
         binding.btnRun.setBackgroundTintList(ColorStateList.valueOf(0xFF1F1F1F));
         ((com.google.android.material.button.MaterialButton) binding.btnRun)
@@ -1652,7 +1684,8 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         int bg = (rooted || !ok) ? 0xFF1F1F1F : 0xFF7A7A7A;
         int stroke = (rooted || !ok) ? 0xFF1F1F1F : 0xFFA6A6A6;
         binding.btnRun.setEnabled(ok);
-        binding.btnRun.setText(rooted ? "Rooted" : "Run exploit");
+        binding.btnRun.setText(rooted ? getString(R.string.rooted)
+                : getString(R.string.run_exploit));
         binding.btnRun.setTextColor(fg);
         binding.btnRun.setBackgroundTintList(ColorStateList.valueOf(bg));
         ((com.google.android.material.button.MaterialButton) binding.btnRun)
@@ -1857,9 +1890,9 @@ public class MainActivity extends AppCompatActivity implements IReporter {
                 // 0 ok, 1 ksud/bootstrap error, 2 poll timeout or bad setup,
                 // 3 failed to patch files (see exp.c markers[]).
                 String why = lastFailReason != null ? lastFailReason
-                        : rc == 1 ? "ksud nonzero exit"
-                        : rc == 2 ? "check logcat & dmesg"
-                        : "failed to patch files";
+                        : rc == 1 ? getString(R.string.fail_ksud)
+                        : rc == 2 ? getString(R.string.fail_dmesg)
+                        : getString(R.string.fail_patch);
                 report("\n=== exploit failed: " + why + " ===\n");
             }
             mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE)
@@ -1873,7 +1906,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
                 boolean rooted = new File("/dev/df").exists();
                 if (rooted) {
                     setRootedState(true);
-                    binding.twoStep.setSeg2(1f, "Verified", 0xFFFFFFFF);
+                    binding.twoStep.setSeg2(1f, getString(R.string.verified), 0xFFFFFFFF, true);
                 } else {
                     setFailedState();
                     setRootedState(false);

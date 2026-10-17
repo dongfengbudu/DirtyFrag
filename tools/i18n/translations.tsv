@@ -1,0 +1,63 @@
+# DirtyFrag 中英对照表 —— 汉化层唯一手工维护的文件
+# 格式：<key>	<英文原文>	<中文译文>（制表符分隔，# 开头为注释）
+# 同一 key 可有多行不同英文变体（如 Java 与菜单里大小写不同）；生成 strings.xml 时按 key 去重。
+# 同步上游后：make localize 重建汉化层，按脚本报告补表，再重跑到报告干净。
+menu_desc	Menu	菜单
+update_pill_desc	Update available, open the release page	有可用更新，点按打开发布页
+update	Update	更新
+odin_pill_desc	Odin download mode availability	Odin 下载模式可用性
+odin_label	Odin	Odin
+su_manager	SU Manager	SU 管理器
+not_selected	Not selected - required	未选择 - 必需
+select	Select	选择
+autorun	Autorun	自启动
+autorun_desc	Runs the exploit after boot	开机后自动运行漏洞利用
+auto_reboot	Auto reboot	自动重启
+auto_reboot_desc	Soft reboots after root	获取 root 后软重启
+ksu_modules	KernelSU Modules	KernelSU 模块
+modules_enabled_reboot	Enabled - active at next reboot	已启用 - 下次重启时生效
+modules_on	Enabled - Active at next reroot	已启用 - 再次 root 时生效
+modules_off	Disabled - No Modules on reroot	已停用 - 再次 root 时不加载模块
+show_log	Show advanced log	显示高级日志
+show_log_desc	Shows full scrollable log	显示完整可滚动日志
+run_exploit	Run exploit	运行漏洞利用
+open_manager_desc	Open SU manager	打开 SU 管理器
+ksu_label	Manager	管理器
+open_desc	Open	打开
+save_log_desc	Save log to Downloads	保存日志到下载
+menu_github	Github Page	GitHub 页面
+menu_expert	Expert mode	专家模式
+menu_expert	Expert Mode	专家模式
+menu_remove	Remove KSU/KSUD	移除 KSU/KSUD
+confirm_run	Are you sure	确认运行
+running	Running	运行中
+reset_layout	Reset layout	重置布局
+autorun_expert	Autorun (Expert)	自启动（专家）
+auto_reboot_expert	Auto reboot (Expert)	自动重启（专家）
+hide_card	Hide card	隐藏卡片
+no_manager	No app with libksud.so found	未找到自带 libksud.so 的应用
+rooted	Rooted	已获取 root
+waiting	Waiting	等待中
+verification	Verification	验证中
+verified	Verified	已验证
+failure	Failure	失败
+reboot_label	Reboot	重启
+odin_lockscreen	Lockscreen	锁屏
+odin_maintenance	Maintenance Mode	维护模式
+odin_device	Device	设备
+yes	Yes	是
+no	No	否
+state_on	On	开
+state_off	Off	关
+supported	Supported	支持
+unsupported	Unsupported	不支持
+log_header	SYSTEM	系统
+hdr_setup	Setup	准备
+hdr_patching	Patching	打补丁
+hdr_init	Init	初始化
+hdr_cleanup	Cleanup	清理
+hdr_failed_prefix	EXPLOIT FAILED	漏洞利用失败
+hdr_failed	EXPLOIT FAILED: %s	漏洞利用失败：%s
+fail_ksud	ksud nonzero exit	ksud 退出码非零
+fail_dmesg	check logcat & dmesg	请查看 logcat 与 dmesg
+fail_patch	failed to patch files	文件补丁失败

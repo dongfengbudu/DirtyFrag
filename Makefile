@@ -30,16 +30,24 @@ APK_SRCS    := $(wildcard app/src/main/java/df/root/*.java \
                                app/src/main/jni/*.c app/src/main/jni/*.h \
                                app/src/main/jni/*.S app/src/main/jni/*.inc \
                                app/src/main/res/layout/*.xml \
-                               app/src/main/res/values/*.xml) \
+                               app/src/main/res/values/*.xml \
+                               app/src/main/res/values-zh/*.xml) \
                    app/src/main/AndroidManifest.xml \
                    app/build.gradle.kts \
                    app/src/main/jni/CMakeLists.txt
 APK   := out/DFRoot.apk
 
 
-.PHONY: all clean
+.PHONY: all clean localize localize-check
 
 all: $(APK)
+
+localize:
+	@printf '\n\033[1;36m══  Localization (zh)  ══\033[0m\n'
+	python3 tools/i18n/localize.py
+
+localize-check:
+	python3 tools/i18n/localize.py --check
 
 keystore.jks:
 	keytool -genkeypair -keystore $@ -storetype JKS \
