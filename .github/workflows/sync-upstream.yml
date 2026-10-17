@@ -1,0 +1,84 @@
+name: Sync upstream & localize
+
+on:
+  schedule:
+    # UTC 21:17 = Beijing 05:17, off the on-the-hour stampede.
+    - cron: "17 21 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        id: upstream
+        run: |
+          git remote add upstream https://github.com/diabl0w/DFRoot.git
+          git fetch upstream
+          git remote set-head upstream --auto
+          branch="$(git rev-parse --abbrev-ref upstream/HEAD)"
+          branch="${branch#upstream/}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "behind=$(git rev-list --count HEAD..upstream/$branch)" >> "$GITHUB_OUTPUT"
+
+      - name: Merge upstream
+        if: steps.upstream.outputs.behind != '0'
+        id: merge
+        continue-on-error: true
+        run: git merge --no-edit "upstream/${{ steps.upstream.outputs.branch }}"
+
+      # No conflicts: rebuild the localization layer and push back. A
+      # GITHUB_TOKEN push does not trigger other workflows (anti-recursion),
+      # so Build is dispatched explicitly at the end.
+      - name: Re-apply localization and push
+        if: steps.upstream.outputs.behind != '0' && steps.merge.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          make localize
+          git add -A
+          if git diff --cached --quiet; then
+            echo "localize: nothing to commit"
+          else
+            git commit -m "chore(i18n): re-apply Chinese localization after upstream sync"
+          fi
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          gh workflow run build.yml --ref "${GITHUB_REF_NAME}"
+
+      # Conflicts: a machine cannot resolve them. Open a cross-repo PR
+      # (upstream branch -> this fork's default branch); its CI runs
+      # assembleDebug, so it doubles as the build check.
+      - name: Open PR on conflicts
+        if: steps.upstream.outputs.behind != '0' && steps.merge.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git merge --abort || true
+          branch="${{ steps.upstream.outputs.branch }}"
+          if [ "$(gh pr list --head "diabl0w:$branch" --json number --jq length)" != "0" ]; then
+            echo "PR for diabl0w:$branch already open"
+            exit 0
+          fi
+          gh pr create \
+            --head "diabl0w:$branch" \
+            --title "Sync upstream: conflicts need manual resolution" \
+            --body '上游 diabl0w/DFRoot 有新提交，与汉化 fork 的改动冲突（大概率在 MainActivity.java / activity_main.xml / TwoStepProgressView.java）。冲突机器解不了，需手动解决后合并；合并后跑一次 make localize 再推送即可恢复汉化层，步骤见 tools/i18n/README.md。'
