@@ -10,6 +10,10 @@ permissions:
   contents: write
   pull-requests: write
   actions: write
+  # Pushing upstream as-is touches .github/workflows/build.yml; without this
+  # the token push is rejected with "refusing to allow a GitHub App to create
+  # or update workflow".
+  workflows: write
 
 concurrency:
   group: sync-upstream
