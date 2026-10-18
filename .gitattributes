@@ -1,0 +1,3 @@
+# Upstream and this fork both grow .gitignore; union merge keeps both sides
+# so the scheduled upstream sync does not stop on a trivial conflict.
+.gitignore merge=union

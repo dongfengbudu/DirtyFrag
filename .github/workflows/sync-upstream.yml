@@ -7,13 +7,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
-  actions: write
-  # Pushing upstream as-is touches .github/workflows/build.yml; without this
-  # the token push is rejected with "refusing to allow a GitHub App to create
-  # or update workflow".
-  workflows: write
+  contents: write # push the merge + localization commits
+  issues: write # conflict notification
+  actions: write # dispatch Build (GITHUB_TOKEN pushes don't trigger workflows)
 
 concurrency:
   group: sync-upstream
@@ -48,7 +44,18 @@ jobs:
         if: steps.upstream.outputs.behind != '0'
         id: merge
         continue-on-error: true
-        run: git merge --no-edit "upstream/${{ steps.upstream.outputs.branch }}"
+        run: |
+          if git merge --no-commit --no-ff "upstream/${{ steps.upstream.outputs.branch }}"; then
+            # The fork owns its CI: upstream commits touch .github/workflows,
+            # and a push that updates a workflow file is rejected without the
+            # workflows permission (which a workflow file cannot grant). Drop
+            # upstream's .github and keep the fork's own.
+            git rm -rq .github 2>/dev/null || true
+            git checkout HEAD -- .github/ 2>/dev/null || true
+            git commit -m "Merge upstream diabl0w/DFRoot@$(git rev-parse --short upstream/${{ steps.upstream.outputs.branch }})"
+          else
+            exit 1
+          fi
 
       # No conflicts: rebuild the localization layer and push back. A
       # GITHUB_TOKEN push does not trigger other workflows (anti-recursion),
@@ -68,25 +75,24 @@ jobs:
           git push origin "HEAD:${GITHUB_REF_NAME}"
           gh workflow run build.yml --ref "${GITHUB_REF_NAME}"
 
-      # Conflicts: a machine cannot resolve them. Push upstream as-is to a
-      # local branch and open a same-repo PR (a cross-repo head=upstream:branch
-      # PR needs permission on the head repo, which GITHUB_TOKEN lacks).
-      # NOTE: gh api chokes on space-separated -f values; always use -f k=v.
-      - name: Open PR on conflicts
+      # Conflicts: a machine cannot resolve them. Opening an issue needs no
+      # push at all (pushing an upstream branch is rejected: its commits touch
+      # workflow files, and a cross-repo head=upstream:branch PR needs
+      # permission on the head repo).
+      - name: Open issue on conflicts
         if: steps.upstream.outputs.behind != '0' && steps.merge.outcome == 'failure'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          files="$(git diff --name-only --diff-filter=U | sed 's/^/- /')"
           git merge --abort || true
-          branch="${{ steps.upstream.outputs.branch }}"
-          git push --force origin "upstream/$branch:refs/heads/sync-upstream"
-          existing="$(gh api "repos/$GITHUB_REPOSITORY/pulls?head=sync-upstream&state=open" --jq length)"
+          title="Upstream sync conflict needs manual resolution"
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" --jq '[.[] | select(.title == "Upstream sync conflict needs manual resolution")] | length')"
           if [ "$existing" != "0" ]; then
-            echo "PR from sync-upstream already open (branch updated)"
+            echo "conflict issue already open"
             exit 0
           fi
-          gh api "repos/$GITHUB_REPOSITORY/pulls" \
-            -f head="sync-upstream" \
-            -f base="${GITHUB_REF_NAME}" \
-            -f title="Sync upstream: conflicts need manual resolution" \
-            -f body='上游 diabl0w/DFRoot 有新提交，与汉化 fork 的改动冲突。本分支即上游代码原样，PR 的 Files changed 里可直接看到冲突文件；解决冲突合并后，跑一次 make localize 恢复汉化层（步骤见 tools/i18n/README.md）。'
+          gh api "repos/$GITHUB_REPOSITORY/issues" \
+            -f title="$title" \
+            -f body="$(printf '上游 diabl0w/DFRoot 有新提交，与汉化 fork 的改动冲突，机器无法自动解决。\n\n冲突文件：\n%s\n\n解决步骤（本地）：\n1. git fetch origin && git checkout master && git pull\n2. git remote add upstream https://github.com/diabl0w/DFRoot.git （如未添加）\n3. git fetch upstream && git merge upstream/master\n4. 解决上面列出的冲突\n5. make localize\n6. git add -A && git commit && git push' "$files")"
+          exit 1
