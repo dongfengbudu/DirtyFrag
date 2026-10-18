@@ -73,7 +73,9 @@ jobs:
             git commit -m "chore(i18n): re-apply Chinese localization after upstream sync"
           fi
           git push origin "HEAD:${GITHUB_REF_NAME}"
-          gh workflow run build.yml --ref "${GITHUB_REF_NAME}"
+          # gh workflow run resolves the repo from git remotes; with origin +
+          # upstream present it can pick the wrong one. Call the API directly.
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/dispatches" -f ref="${GITHUB_REF_NAME}"
 
       # Conflicts: a machine cannot resolve them. Opening an issue needs no
       # push at all (pushing an upstream branch is rejected: its commits touch
