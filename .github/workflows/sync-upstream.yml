@@ -64,11 +64,10 @@ jobs:
           git push origin "HEAD:${GITHUB_REF_NAME}"
           gh workflow run build.yml --ref "${GITHUB_REF_NAME}"
 
-      # Conflicts: a machine cannot resolve them. Open a cross-repo PR
-      # (upstream branch -> this fork's default branch); its CI runs
-      # assembleDebug, so it doubles as the build check. The REST API
-      # accepts a cross-repo head (user:branch); the GraphQL route that
-      # gh pr create uses rejects integration tokens here.
+      # Conflicts: a machine cannot resolve them. Push upstream as-is to a
+      # local branch and open a same-repo PR (a cross-repo head=upstream:branch
+      # PR needs permission on the head repo, which GITHUB_TOKEN lacks).
+      # NOTE: gh api chokes on space-separated -f values; always use -f k=v.
       - name: Open PR on conflicts
         if: steps.upstream.outputs.behind != '0' && steps.merge.outcome == 'failure'
         env:
@@ -76,13 +75,14 @@ jobs:
         run: |
           git merge --abort || true
           branch="${{ steps.upstream.outputs.branch }}"
-          existing="$(gh api "repos/$GITHUB_REPOSITORY/pulls?head=diabl0w:$branch&state=open" --jq length)"
+          git push --force origin "upstream/$branch:refs/heads/sync-upstream"
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/pulls?head=sync-upstream&state=open" --jq length)"
           if [ "$existing" != "0" ]; then
-            echo "PR for diabl0w:$branch already open"
+            echo "PR from sync-upstream already open (branch updated)"
             exit 0
           fi
           gh api "repos/$GITHUB_REPOSITORY/pulls" \
-            -f head="diabl0w:$branch" \
+            -f head="sync-upstream" \
             -f base="${GITHUB_REF_NAME}" \
             -f title="Sync upstream: conflicts need manual resolution" \
-            -f body '上游 diabl0w/DFRoot 有新提交，与汉化 fork 的改动冲突。冲突机器解不了，需手动解决后合并；合并后跑一次 make localize 再推送即可恢复汉化层，步骤见 tools/i18n/README.md。'
+            -f body='上游 diabl0w/DFRoot 有新提交，与汉化 fork 的改动冲突。本分支即上游代码原样，PR 的 Files changed 里可直接看到冲突文件；解决冲突合并后，跑一次 make localize 恢复汉化层（步骤见 tools/i18n/README.md）。'
