@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: write # push the merge + localization commits
-  issues: write # conflict notification
   actions: write # dispatch Build (GITHUB_TOKEN pushes don't trigger workflows)
 
 concurrency:
@@ -77,24 +76,28 @@ jobs:
           # upstream present it can pick the wrong one. Call the API directly.
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/dispatches" -f ref="${GITHUB_REF_NAME}"
 
-      # Conflicts: a machine cannot resolve them. Opening an issue needs no
-      # push at all (pushing an upstream branch is rejected: its commits touch
-      # workflow files, and a cross-repo head=upstream:branch PR needs
-      # permission on the head repo).
-      - name: Open issue on conflicts
+      # Conflicts: a machine cannot resolve them. Report the conflicting files
+      # and the manual steps in the run summary (this repo has Issues disabled,
+      # so an issue would 410), then fail the job so the sync is visibly stuck.
+      - name: Report conflicts in run summary
         if: steps.upstream.outputs.behind != '0' && steps.merge.outcome == 'failure'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           files="$(git diff --name-only --diff-filter=U | sed 's/^/- /')"
           git merge --abort || true
-          title="Upstream sync conflict needs manual resolution"
-          existing="$(gh api "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" --jq '[.[] | select(.title == "Upstream sync conflict needs manual resolution")] | length')"
-          if [ "$existing" != "0" ]; then
-            echo "conflict issue already open"
-            exit 0
-          fi
-          gh api "repos/$GITHUB_REPOSITORY/issues" \
-            -f title="$title" \
-            -f body="$(printf '上游 diabl0w/DFRoot 有新提交，与汉化 fork 的改动冲突，机器无法自动解决。\n\n冲突文件：\n%s\n\n解决步骤（本地）：\n1. git fetch origin && git checkout master && git pull\n2. git remote add upstream https://github.com/diabl0w/DFRoot.git （如未添加）\n3. git fetch upstream && git merge upstream/master\n4. 解决上面列出的冲突\n5. make localize\n6. git add -A && git commit && git push' "$files")"
+          {
+            echo "## 上游同步冲突，需人工解决"
+            echo ""
+            echo "上游 diabl0w/DFRoot 有新提交，与汉化 fork 的改动冲突，机器无法自动解决。"
+            echo ""
+            echo "冲突文件："
+            echo "$files"
+            echo ""
+            echo "解决步骤（本地）："
+            echo '1. git fetch origin && git checkout master && git pull'
+            echo '2. git remote add upstream https://github.com/diabl0w/DFRoot.git （如未添加）'
+            echo '3. git fetch upstream && git merge upstream/master'
+            echo '4. 解决上面列出的冲突'
+            echo '5. make localize'
+            echo '6. git add -A && git commit && git push'
+          } >> "$GITHUB_STEP_SUMMARY"
           exit 1
