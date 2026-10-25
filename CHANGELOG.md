@@ -17,6 +17,10 @@
 - The marker has to stand on its own, not sit inside a longer word: a bare substring test matched
   `angular-translate-loader` inside Noxfold-Sync's 27 MB Syncthing binary, so a sync app was listed as a
   manager too. The byte before and after the match must not be a letter, digit, `_` or `-`.
+- The fallback also requires ksud's own name to appear in the file. A wrong pick is not just a wrong
+  row: the staged copy is executed as root, so the bar is set where a false negative (a manager that
+  does not show up) is cheaper than a false positive. The real binaries contain `ksud` 92 and 112
+  times; Syncthing's contains it zero times.
 
 ### UI
 
