@@ -5,7 +5,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Package visibility (Android 11+): the SU-manager picker enumerates every
-         installed app and keeps only the ones that actually ship libksud.so, so a
+         installed app and keeps only the ones that actually ship a usable ksud, so a
          fixed <queries> allow-list is no longer enough. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <application

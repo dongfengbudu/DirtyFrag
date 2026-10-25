@@ -13,7 +13,7 @@ hardening) and keeps upstream's SU-manager agnostic design.
 ## Install
 
 1. Install the DirtyFrag APK from [Releases](https://github.com/mitschud/DirtyFrag/releases/latest).
-2. Install an SU manager that **ships `libksud.so`**:
+2. Install an SU manager that **ships a usable `ksud`** (normally `libksud.so`):
    - Samsung - **required**:
      - [diabl0w's KernelSU](https://github.com/diabl0w/KernelSU/releases)
    - Other:
@@ -25,8 +25,9 @@ hardening) and keeps upstream's SU-manager agnostic design.
 
 > [!WARNING]
 > Since 1.10 (upstream 3.2) DirtyFrag no longer bundles `ksud` - it is staged from the selected
-> manager's own `libksud.so`. A manager that does not ship that library cannot give you root. The
-> older advice to install a CI / Actions build of the manager no longer applies.
+> manager's own ksud binary (`libksud.so`, or the randomised executable .so SukiSU ships). A manager
+> that does not carry one cannot give you root. The older advice to install a CI / Actions build of
+> the manager no longer applies.
 
 A fresh install of DirtyFrag gets a new Android UID, so the grant in the manager has to be given
 again after every reinstall.

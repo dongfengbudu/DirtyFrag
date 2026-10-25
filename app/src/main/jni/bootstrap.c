@@ -166,6 +166,18 @@ static int run_ctx(const char *ctx, char *const argv[])
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
+/* KernelSU and its older forks take the manager package on the command line for
+ * the kernel module; YukiSU's ksud has no such option and rejects the whole
+ * command before loading anything, identifying its manager by APK signature
+ * instead. Retry bare when the first form is refused. */
+static int run_late_load(const char *su_manager)
+{
+    if (run_ctx(NULL, (char *[]){ KSUD_STAGE, "late-load", "--package-name",
+                                 (char *)su_manager, NULL }) == 0)
+        return 0;
+    return run_ctx(NULL, (char *[]){ KSUD_STAGE, "late-load", NULL });
+}
+
 static void touch(const char *path)
 {
     int fd = open(path, O_CREAT | O_WRONLY, 0666);
@@ -220,7 +232,7 @@ int main(void)
     }
 
     touch("/dev/dfm5");    
-    if (run_ctx(NULL, (char *[]){ KSUD_STAGE, "late-load", "--package-name", su_manager, NULL }) == 0) {
+    if (run_late_load(su_manager) == 0) {
         touch("/dev/dfm6");
         if (soft_reboot) {
             while (late_load_running()) sleep(1);

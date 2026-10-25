@@ -552,7 +552,7 @@
          edge = (54-20)/2, which centres it in the circle AND puts it at the
          pill's end - one drawable, no icon animation. No KSU logo: the manager
          can be KernelSU, KernelSU-Next, KowSU or anything else that ships
-         libksud.so, so a KernelSU-shaped glyph would be a lie. -->
+         a usable ksud, so a KernelSU-shaped glyph would be a lie. -->
     <FrameLayout
         android:id="@+id/btnKsu"
         android:layout_width="54dp"

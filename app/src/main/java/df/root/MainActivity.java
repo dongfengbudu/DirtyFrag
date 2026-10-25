@@ -75,7 +75,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
      *  /data/user_de/0/df.root/, so every pref the exploit depends on must live
      *  there, not in credential-protected storage. */
     private Context mDeCtx;
-    /** Package name of the SU manager whose libksud.so gets staged, or null. */
+    /** Package name of the SU manager whose ksud binary gets staged, or null. */
     private String suManagerPkg;
     private CharSequence suManagerLabel;
     /** A failed run locks the Run button until reboot (page-cache patch). */
@@ -510,9 +510,9 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         mExec.execute(this::refreshOdin);
 
         // SU Manager card: upstream 3.2 deleted the bundled assets/ksud, so the
-        // exploit stages libksud.so out of the chosen manager's
+        // exploit stages ksud out of the chosen manager's
         // nativeLibraryDir and refuses to run without one. Only apps that
-        // actually ship that library are offered.
+        // actually ship a usable ksud are offered.
         loadSuManagerPref();
         binding.rowSuManager.setOnClickListener(v -> {
             v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
@@ -1189,7 +1189,8 @@ public class MainActivity extends AppCompatActivity implements IReporter {
 
     // ---- SU manager picker --------------------------------------------------
 
-    /** One candidate: an app that actually ships libksud.so. */
+    /** One candidate: an app shipping a usable ksud binary - libksud.so for
+     *  KernelSU and its forks, a randomised executable .so for SukiSU. */
     private static final class SuManagerEntry {
         final String packageName;
         final CharSequence label;
@@ -1200,16 +1201,16 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         }
     }
 
-    /** Every installed app carrying libksud.so in its native lib dir - exactly
-     *  the set ExploitRunner.stageAssets() can use, so anything listed here is
+    /** Every installed app carrying a usable ksud binary in its native lib dir
+     *  (libksud.so, or SukiSU's randomly named executable .so) - exactly the
+     *  set ExploitRunner.stageAssets() can use, so anything listed here is
      *  guaranteed to pass the runtime check too. */
     private List<SuManagerEntry> scanSuManagers() {
         List<SuManagerEntry> out = new ArrayList<>();
         PackageManager pm = getPackageManager();
         for (ApplicationInfo ai : pm.getInstalledApplications(0)) {
             if (ai.packageName.equals(getPackageName())) continue;
-            if (ai.nativeLibraryDir == null) continue;
-            if (!new File(ai.nativeLibraryDir, "libksud.so").exists()) continue;
+            if (ExploitRunner.findKsud(ai) == null) continue;
             out.add(new SuManagerEntry(ai.packageName, pm.getApplicationLabel(ai)));
         }
         out.sort((a, b) -> a.label.toString().compareToIgnoreCase(b.label.toString()));
@@ -1217,7 +1218,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
     }
 
     /** Restores the saved selection, dropping it if that app is gone or no
-     *  longer ships libksud.so. */
+     *  longer ships a usable ksud. */
     private void loadSuManagerPref() {
         SharedPreferences sp = mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE);
         String saved = sp.getString("su_manager", null);

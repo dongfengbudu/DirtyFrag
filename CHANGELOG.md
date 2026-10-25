@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Manager compatibility
+
+- The manager picker and the runtime check no longer key on the `libksud.so` file name. SukiSU ships
+  the same executable under a randomised `lib*.so` name, so a native library that is an ELF executable
+  (has `PT_INTERP`, at least 1 MiB) is accepted too; KernelSU and its forks still resolve by name first.
+- `late-load` is retried without `--package-name` when the manager's ksud refuses it. YukiSU dropped
+  that option from its CLI parser and exits before loading anything, which left its manager showing
+  "not installed" after an otherwise successful run. KernelSU and its forks still get the package name.
+
 - Watching [chisewaguri/DFRoot](https://github.com/chisewaguri/DFRoot/tree/upstream-standalone): it drops
   the separate bootstrap binary and the staged copy of ksud, and has the kernel module exec the selected
   manager's own `libksud.so`, passing the package name and both switches as insmod parameters. That is
