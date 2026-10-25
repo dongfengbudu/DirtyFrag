@@ -14,6 +14,9 @@
 - `PT_INTERP` alone was too loose: apps that package their own executables as `lib*.so` (mpv-based
   players, emulators) were listed as managers. The fallback now also requires ksud's `late-load`
   subcommand to appear in the file.
+- The marker has to stand on its own, not sit inside a longer word: a bare substring test matched
+  `angular-translate-loader` inside Noxfold-Sync's 27 MB Syncthing binary, so a sync app was listed as a
+  manager too. The byte before and after the match must not be a letter, digit, `_` or `-`.
 
 ### UI
 
