@@ -23,6 +23,9 @@
 - The manager picker scrolls. With every candidate listed the popup outran the screen, and a
   `WRAP_CONTENT` window clipped the rows past the bottom edge with no way to reach them; the rows now sit
   in a `ScrollView` capped to the room below the card.
+- Opening the picker no longer stalls for seconds. The scan visits every installed app's native lib dir
+  and reads multi-MB binaries, and it ran on the main thread; `onResume` ran it too. The result is cached
+  and refreshed on a worker, and the saved selection's label now comes straight from `PackageManager`.
 - The update pill only lights up when upstream publishes a newer release. The check asked
   `mitschud/DirtyFrag`, whose latest tag is an unrelated `1.16`, so the pill was on permanently. It now
   asks `diabl0w/DFRoot` and compares version segments numerically (`4.10` is newer than `4.7`).

@@ -78,6 +78,10 @@ public class MainActivity extends AppCompatActivity implements IReporter {
     /** Package name of the SU manager whose ksud binary gets staged, or null. */
     private String suManagerPkg;
     private CharSequence suManagerLabel;
+    /** The last full manager scan. Finding a ksud walks every installed app's
+     *  native lib dir and reads multi-MB binaries, which took seconds on the
+     *  main thread, so the result is cached and refreshed off-thread. */
+    private List<SuManagerEntry> suManagerCache;
     /** A failed run locks the Run button until reboot (page-cache patch). */
     private boolean failedRun;
     /** Raw "***FAILED***: ..." text from the exploit, used for the failure log. */
@@ -1217,23 +1221,40 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         return out;
     }
 
-    /** Restores the saved selection, dropping it if that app is gone or no
-     *  longer ships a usable ksud. */
+    /** Restores the saved selection. The label comes straight from
+     *  PackageManager; whether that app still ships a usable ksud is settled on
+     *  a worker, since the scan reads every candidate binary. */
     private void loadSuManagerPref() {
         SharedPreferences sp = mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE);
         String saved = sp.getString("su_manager", null);
         suManagerPkg = null;
         suManagerLabel = null;
         if (saved != null) {
-            for (SuManagerEntry e : scanSuManagers()) {
-                if (e.packageName.equals(saved)) {
-                    suManagerPkg = e.packageName;
-                    suManagerLabel = e.label;
-                    break;
-                }
+            try {
+                ApplicationInfo ai = getPackageManager().getApplicationInfo(saved, 0);
+                suManagerPkg = saved;
+                suManagerLabel = getPackageManager().getApplicationLabel(ai);
+            } catch (PackageManager.NameNotFoundException e) {
+                sp.edit().remove("su_manager").apply();
             }
-            if (suManagerPkg == null) sp.edit().remove("su_manager").apply();
         }
+        applySuManagerSubtitle();
+        if (suManagerPkg != null) {
+            final String pkg = suManagerPkg;
+            mExec.execute(() -> {
+                boolean usable;
+                try {
+                    usable = ExploitRunner.findKsud(
+                            getPackageManager().getApplicationInfo(pkg, 0)) != null;
+                } catch (PackageManager.NameNotFoundException e) {
+                    usable = false;
+                }
+                if (!usable) runOnUiThread(this::clearSuManagerSelection);
+            });
+        }
+    }
+
+    private void applySuManagerSubtitle() {
         binding.suManagerSubtitle.setText(suManagerPkg == null
                 ? getString(R.string.not_selected)
                 : suManagerLabel + "  (" + suManagerPkg + ")");
@@ -1241,11 +1262,41 @@ public class MainActivity extends AppCompatActivity implements IReporter {
                 ? 0xFFE57373 : 0xFF9E9E9E);
     }
 
+    private void clearSuManagerSelection() {
+        mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE)
+                .edit().remove("su_manager").apply();
+        suManagerPkg = null;
+        suManagerLabel = null;
+        applySuManagerSubtitle();
+        updateRunButton();
+    }
+
+    /** Opens the picker from the cached scan, refreshing it on a worker for the
+     *  next open. The first open has to wait for that scan, so it runs there
+     *  too instead of blocking the main thread. */
+    private void showSuManagerPopup() {
+        List<SuManagerEntry> cached = suManagerCache;
+        if (cached != null) {
+            buildSuManagerPopup(cached);
+            mExec.execute(() -> {
+                List<SuManagerEntry> fresh = scanSuManagers();
+                runOnUiThread(() -> suManagerCache = fresh);
+            });
+            return;
+        }
+        mExec.execute(() -> {
+            List<SuManagerEntry> fresh = scanSuManagers();
+            runOnUiThread(() -> {
+                suManagerCache = fresh;
+                buildSuManagerPopup(fresh);
+            });
+        });
+    }
+
     /** OneUI-style rounded popup list over the dim overlay - same look and feel
      *  as the overflow menu, so the picker does not look like a stock spinner. */
-    private void showSuManagerPopup() {
+    private void buildSuManagerPopup(List<SuManagerEntry> apps) {
         float md = getResources().getDisplayMetrics().density;
-        List<SuManagerEntry> apps = scanSuManagers();
         final android.widget.PopupWindow[] pwRef = {null};
 
         android.widget.LinearLayout box = new android.widget.LinearLayout(this);
