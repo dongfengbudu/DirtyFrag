@@ -35,7 +35,7 @@ reset_layout	Reset layout	重置布局
 autorun_expert	Autorun (Expert)	自启动（专家）
 auto_reboot_expert	Auto reboot (Expert)	自动重启（专家）
 hide_card	Hide card	隐藏卡片
-no_manager	No app with libksud.so found	未找到自带 libksud.so 的应用
+no_manager	No app with a ksud binary found	未找到自带 ksud 可执行文件的应用
 rooted	Rooted	已获取 root
 waiting	Waiting	等待中
 verification	Verification	验证中

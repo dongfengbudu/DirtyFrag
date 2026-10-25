@@ -1253,6 +1253,21 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         box.setBackgroundResource(R.drawable.popup_bg);
         box.setPadding(0, (int) (6 * md), 0, (int) (6 * md));
 
+        // Every installed app carrying a ksud is listed, which easily outruns the
+        // screen. The rows go into a ScrollView so the ones past the bottom edge
+        // can still be reached by swiping up.
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        scroll.setVerticalScrollBarEnabled(false);
+        android.widget.LinearLayout list = new android.widget.LinearLayout(this);
+        list.setOrientation(android.widget.LinearLayout.VERTICAL);
+        scroll.addView(list, new android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT));
+        box.addView(scroll, new android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT));
+
         if (apps.isEmpty()) {
             TextView none = new TextView(this);
             none.setText(getString(R.string.no_manager));
@@ -1260,7 +1275,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
             none.setPadding((int) (20 * md), (int) (12 * md), (int) (20 * md), (int) (12 * md));
             none.setTextColor(0xFF6E6E6E);
             none.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
-            box.addView(none);
+            list.addView(none);
         }
 
         for (SuManagerEntry e : apps) {
@@ -1302,16 +1317,36 @@ public class MainActivity extends AppCompatActivity implements IReporter {
                 selectSuManager(e);
                 if (pwRef[0] != null) pwRef[0].dismiss();
             });
-            box.addView(col, new android.widget.LinearLayout.LayoutParams(
+            list.addView(col, new android.widget.LinearLayout.LayoutParams(
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT, (int) (56 * md)));
         }
 
-        box.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
         int cardW = binding.cardSuManager.getWidth();
-        int pw_w = cardW > 0 ? cardW : Math.max(box.getMeasuredWidth(), (int) (240 * md));
+        int pw_w = cardW > 0 ? cardW : (int) (240 * md);
 
-        final android.widget.PopupWindow pw = new android.widget.PopupWindow(box,
-                pw_w, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        int[] loc = new int[2];
+        binding.cardSuManager.getLocationOnScreen(loc);
+        // Centered, NOT card-anchored: the popup is exactly card-wide and the
+        // card sits 16dp from each edge, so half the leftover IS the card's own
+        // margin. Anchoring to the card's left + 16dp pushed the popup 16dp
+        // right, which read as off-centre and clipped its right edge.
+        int x = (getResources().getDisplayMetrics().widthPixels - pw_w) / 2;
+        int y = loc[1] + binding.cardSuManager.getHeight() + (int) (4 * md);
+
+        // Capped to the room below the card, so the list scrolls instead of being
+        // cut off by the bottom edge of the screen.
+        int avail = Math.max(getResources().getDisplayMetrics().heightPixels
+                - y - (int) (16 * md), 0);
+        box.measure(View.MeasureSpec.makeMeasureSpec(pw_w, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(avail, View.MeasureSpec.AT_MOST));
+        int pw_h = Math.min(box.getMeasuredHeight(), avail);
+        // PopupWindow gives its content view MATCH_PARENT, so a WRAP_CONTENT
+        // ScrollView inside it would still measure to the full list height and
+        // overflow the window. Pin it to the height the popup was given instead.
+        scroll.getLayoutParams().height = Math.max(pw_h - box.getPaddingTop()
+                - box.getPaddingBottom(), 0);
+
+        final android.widget.PopupWindow pw = new android.widget.PopupWindow(box, pw_w, pw_h, true);
         pw.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
                 android.graphics.Color.TRANSPARENT));
         pw.setOutsideTouchable(true);
@@ -1330,14 +1365,6 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         box.setClipToOutline(true);
         box.setElevation(48 * md);
 
-        int[] loc = new int[2];
-        binding.cardSuManager.getLocationOnScreen(loc);
-        // Centered, NOT card-anchored: the popup is exactly card-wide and the
-        // card sits 16dp from each edge, so half the leftover IS the card's own
-        // margin. Anchoring to the card's left + 16dp pushed the popup 16dp
-        // right, which read as off-centre and clipped its right edge.
-        int x = (getResources().getDisplayMetrics().widthPixels - pw_w) / 2;
-        int y = loc[1] + binding.cardSuManager.getHeight() + (int) (4 * md);
         binding.dimOverlay.setVisibility(View.VISIBLE);
         binding.dimOverlay.setAlpha(0f);
         binding.dimOverlay.animate().alpha(0.5f).setDuration(150).start();
@@ -1459,13 +1486,15 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         binding.updatePill.setLayoutParams(lp);
     }
 
-    /** SamSU-style GitHub release check: the pill around the version turns
-     *  green when the latest published release tag differs from this build's
-     *  versionName. Silent on offline / rate-limit / API hiccups. */
+    /** SamSU-style GitHub release check: the pill around the version turns green
+     *  when upstream has a newer release than this build's versionName. It asks
+     *  the upstream repo because this fork tracks that release line - another
+     *  fork's latest tag (an unrelated 1.16 line) kept the pill lit forever.
+     *  Silent on offline / rate-limit / API hiccups. */
     private void checkForAppUpdate() {
         try {
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection)
-                    new java.net.URL("https://api.github.com/repos/mitschud/DirtyFrag/releases/latest")
+                    new java.net.URL("https://api.github.com/repos/diabl0w/DFRoot/releases/latest")
                             .openConnection();
             conn.setConnectTimeout(8000);
             conn.setReadTimeout(8000);
@@ -1490,12 +1519,48 @@ public class MainActivity extends AppCompatActivity implements IReporter {
             } catch (Exception e) {
                 return;
             }
-            if (latest.equalsIgnoreCase(mine)) return;
+            if (!isNewerVersion(latest, mine)) return;
             Log.i(TAG, "update check: update available (latest=" + latest + ")");
             mMain.post(this::showUpdatePill);
         } catch (Exception e) {
             Log.i(TAG, "update check failed: " + e);
         }
+    }
+
+    /** Segment-wise numeric compare. String equality reported 4.10 as behind 4.7
+     *  and any other fork's tag as an update; non-numeric parts ("v", "rc") drop
+     *  out. Written as a character scan rather than a regex split because the
+     *  localization pass mistakes regex literals for untranslated UI strings. */
+    private static boolean isNewerVersion(String candidate, String current) {
+        java.util.List<Integer> a = versionParts(candidate);
+        java.util.List<Integer> b = versionParts(current);
+        for (int i = 0; i < Math.max(a.size(), b.size()); i++) {
+            int x = i < a.size() ? a.get(i) : 0;
+            int y = i < b.size() ? b.get(i) : 0;
+            if (x != y) return x > y;
+        }
+        return false;
+    }
+
+    private static java.util.List<Integer> versionParts(String v) {
+        java.util.List<Integer> out = new java.util.ArrayList<>();
+        int n = 0;
+        boolean inNumber = false;
+        for (int i = 0; i < v.length(); i++) {
+            char c = v.charAt(i);
+            if (c >= '0' && c <= '9') {
+                n = n * 10 + (c - '0');
+                inNumber = true;
+            } else if (c == '-' || c == '+') {
+                break;  // pre-release suffix: compare the release number only
+            } else if (inNumber) {
+                out.add(n);
+                n = 0;
+                inNumber = false;
+            }
+        }
+        if (inNumber) out.add(n);
+        return out;
     }
 
     /**

@@ -32,7 +32,7 @@
     <string name="autorun_expert">Autorun (Expert)</string>
     <string name="auto_reboot_expert">Auto reboot (Expert)</string>
     <string name="hide_card">Hide card</string>
-    <string name="no_manager">No app with libksud.so found</string>
+    <string name="no_manager">No app with a ksud binary found</string>
     <string name="rooted">Rooted</string>
     <string name="waiting">Waiting</string>
     <string name="verification">Verification</string>
