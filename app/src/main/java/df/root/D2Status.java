@@ -69,16 +69,16 @@ final class D2Status {
         }
 
         /** The three submenu rows, worded the way the pill means them. */
-        String lockscreenLabel() {
-            return lockscreen ? "Yes" : "No";
+        String lockscreenLabel(Context ctx) {
+            return ctx.getString(lockscreen ? R.string.yes : R.string.no);
         }
 
-        String maintenanceLabel() {
-            return maintenance ? "On" : "Off";
+        String maintenanceLabel(Context ctx) {
+            return ctx.getString(maintenance ? R.string.on : R.string.off);
         }
 
-        String deviceLabel() {
-            return supported ? "Supported" : "Unsupported";
+        String deviceLabel(Context ctx) {
+            return ctx.getString(supported ? R.string.supported : R.string.unsupported);
         }
     }
 

@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="menu">菜单</string>
+    <string name="update">更新</string>
+    <string name="update_available">有可用更新，打开发布页面</string>
+
+    <string name="recovery">恢复模式</string>
+    <string name="recovery_mode_desc">恢复模式：切换下载模式授权</string>
+
+    <string name="su_manager">SU 管理器</string>
+    <string name="su_manager_not_selected">未选择（必填）</string>
+    <string name="su_manager_selected">%1$s（%2$s）</string>
+    <string name="su_manager_empty">未找到包含 ksud 二进制的应用</string>
+    <string name="select">选择</string>
+
+    <string name="autorun">自动运行</string>
+    <string name="autorun_expert">自动运行（专家）</string>
+    <string name="autorun_desc">开机后自动运行漏洞利用</string>
+    <string name="auto_reboot">自动重启</string>
+    <string name="auto_reboot_expert">自动重启（专家）</string>
+    <string name="auto_reboot_desc">获取 Root 后软重启</string>
+
+    <string name="modules">KernelSU 模块</string>
+    <string name="modules_enabled">已启用，下次重新 Root 时生效</string>
+    <string name="modules_disabled">已禁用，重新 Root 时不加载模块</string>
+
+    <string name="advanced_log">显示高级日志</string>
+    <string name="advanced_log_desc">显示完整可滚动日志</string>
+
+    <string name="run_exploit">运行漏洞利用</string>
+    <string name="run_confirm">确认运行</string>
+    <string name="running">运行中</string>
+    <string name="rooted">已获取 Root</string>
+
+    <string name="manager">管理器</string>
+    <string name="open_su_manager">打开 SU 管理器</string>
+    <string name="open">打开</string>
+    <string name="save_log">保存日志到下载目录</string>
+
+    <string name="open_github">打开 GitHub 页面</string>
+    <string name="reset_layout">重置界面布局</string>
+    <string name="expert_mode">专家模式</string>
+    <string name="hide_card">隐藏卡片</string>
+
+    <string name="progress_waiting">等待中</string>
+    <string name="progress_verification">验证中</string>
+    <string name="progress_verified">已验证</string>
+    <string name="progress_failure">失败</string>
+    <string name="progress_reboot">重启</string>
+
+    <string name="dl_recovery">下载/恢复</string>
+    <string name="lockscreen">锁屏</string>
+    <string name="maintenance_mode">维护模式</string>
+    <string name="device">设备</string>
+    <string name="yes">是</string>
+    <string name="no">否</string>
+    <string name="on">开</string>
+    <string name="off">关</string>
+    <string name="supported">支持</string>
+    <string name="unsupported">不支持</string>
+
+    <string name="recovery_writer">恢复模式写入</string>
+    <string name="autorun_writer">自动运行写入</string>
+    <string name="writing_flag">正在写入标志…</string>
+    <string name="clearing_flag">正在清除标志…</string>
+
+    <string name="verdict_not_gated">此固件不限制下载模式</string>
+    <string name="verdict_blocked">D2 已阻止</string>
+    <string name="verdict_allowed">允许</string>
+    <string name="verdict_unknown">未知</string>
+
+    <string name="switch_name">%1$s%2$s</string>
+    <string name="suffix_expert">（专家）</string>
+    <string name="suffix_no_gate">（无门控）</string>
+    <string name="suffix_at_reroot">（重新 Root 时）</string>
+</resources>

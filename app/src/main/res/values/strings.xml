@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="menu">Menu</string>
+    <string name="update">Update</string>
+    <string name="update_available">Update available, open the release page</string>
+
+    <string name="recovery">Recovery</string>
+    <string name="recovery_mode_desc">Recovery mode: toggle download-mode authorisation</string>
+
+    <string name="su_manager">SU Manager</string>
+    <string name="su_manager_not_selected">Not selected - required</string>
+    <string name="su_manager_selected">%1$s  (%2$s)</string>
+    <string name="su_manager_empty">No app with a ksud binary found</string>
+    <string name="select">Select</string>
+
+    <string name="autorun">Autorun</string>
+    <string name="autorun_expert">Autorun (Expert)</string>
+    <string name="autorun_desc">Runs the exploit after boot</string>
+    <string name="auto_reboot">Auto reboot</string>
+    <string name="auto_reboot_expert">Auto reboot (Expert)</string>
+    <string name="auto_reboot_desc">Soft reboots after root</string>
+
+    <string name="modules">KernelSU Modules</string>
+    <string name="modules_enabled">Enabled - active at next reroot</string>
+    <string name="modules_disabled">Disabled - no modules on reroot</string>
+
+    <string name="advanced_log">Show advanced log</string>
+    <string name="advanced_log_desc">Shows full scrollable log</string>
+
+    <string name="run_exploit">Run exploit</string>
+    <string name="run_confirm">Are you sure</string>
+    <string name="running">Running</string>
+    <string name="rooted">Rooted</string>
+
+    <string name="manager">Manager</string>
+    <string name="open_su_manager">Open SU manager</string>
+    <string name="open">Open</string>
+    <string name="save_log">Save log to Downloads</string>
+
+    <string name="open_github">Open Github Page</string>
+    <string name="reset_layout">Reset UI Layout</string>
+    <string name="expert_mode">Expert Mode</string>
+    <string name="hide_card">Hide card</string>
+
+    <string name="progress_waiting">Waiting</string>
+    <string name="progress_verification">Verification</string>
+    <string name="progress_verified">Verified</string>
+    <string name="progress_failure">Failure</string>
+    <string name="progress_reboot">Reboot</string>
+
+    <string name="dl_recovery">DL/Recovery</string>
+    <string name="lockscreen">Lockscreen</string>
+    <string name="maintenance_mode">Maintenance Mode</string>
+    <string name="device">Device</string>
+    <string name="yes">Yes</string>
+    <string name="no">No</string>
+    <string name="on">On</string>
+    <string name="off">Off</string>
+    <string name="supported">Supported</string>
+    <string name="unsupported">Unsupported</string>
+
+    <string name="recovery_writer">Recovery Writer</string>
+    <string name="autorun_writer">Autorun Writer</string>
+    <string name="writing_flag">Writing flag ...</string>
+    <string name="clearing_flag">Clearing flag ...</string>
+
+    <string name="verdict_not_gated">Not gated here</string>
+    <string name="verdict_blocked">D2 Blocked</string>
+    <string name="verdict_allowed">Allowed</string>
+    <string name="verdict_unknown">Unknown</string>
+
+    <string name="switch_name">%1$s %2$s</string>
+    <string name="suffix_expert">(Expert)</string>
+    <string name="suffix_no_gate">(no gate)</string>
+    <string name="suffix_at_reroot">(at reroot)</string>
+</resources>

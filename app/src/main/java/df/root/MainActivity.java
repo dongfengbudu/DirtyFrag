@@ -90,9 +90,13 @@ public class MainActivity extends Activity implements IReporter {
      *  /data/user_de/0/df.root/, so every pref the exploit depends on must live
      *  there, not in credential-protected storage. */
     private Context mDeCtx;
-    /** Package name of the SU manager whose libksud.so gets staged, or null. */
+    /** Package name of the SU manager whose ksud binary gets staged, or null. */
     private String suManagerPkg;
     private CharSequence suManagerLabel;
+    /** The last full manager scan. Finding a ksud walks every installed app's
+     *  native lib dir and reads multi-MB binaries, which took seconds on the
+     *  main thread, so the result is cached and refreshed off-thread. */
+    private List<SuManagerEntry> suManagerCache;
     /** A failed run locks the Run button until reboot (page-cache patch). */
     private boolean failedRun;
     /** Raw "***FAILED***: ..." text from the exploit, used for the failure log. */
@@ -227,28 +231,28 @@ public class MainActivity extends Activity implements IReporter {
         // v4.0 renamed every marker and dropped the "env adopted" / "partitions set
         // ro" confirmations, so these steps are re-keyed to the new table.
         if (t.startsWith("kernel module: launching bootstrap")) {
-            setSeg2(0.14f, "Verification", 0xFFFFFFFF);
+            setSeg2(0.14f, getString(R.string.progress_verification), 0xFFFFFFFF);
         }
         if (t.startsWith("bootstrap: loading app preferences file")) {
-            setSeg2(0.28f, "Verification", 0xFFFFFFFF);
+            setSeg2(0.28f, getString(R.string.progress_verification), 0xFFFFFFFF);
         }
         if (t.startsWith("bootstrap: cloning zygote env")
                 || t.startsWith("bootstrap: WARNING - clone zygote env failed")) {
-            setSeg2(0.42f, "Verification", 0xFFFFFFFF);
+            setSeg2(0.42f, getString(R.string.progress_verification), 0xFFFFFFFF);
         }
         if (t.startsWith("bootstrap: setting partitions ro")
                 || t.startsWith("bootstrap: WARNING - set partitions ro failed")) {
-            setSeg2(0.57f, "Verification", 0xFFFFFFFF);
+            setSeg2(0.57f, getString(R.string.progress_verification), 0xFFFFFFFF);
         }
         if (t.startsWith("bootstrap: disabling ksu modules")) {
-            setSeg2(0.71f, "Verification", 0xFFFFFFFF);
+            setSeg2(0.71f, getString(R.string.progress_verification), 0xFFFFFFFF);
         }
         if (t.startsWith("bootstrap: starting SU daemon")) {
-            setSeg2(0.85f, "Verification", 0xFFFFFFFF);
+            setSeg2(0.85f, getString(R.string.progress_verification), 0xFFFFFFFF);
         }
         if (t.equals("ksud start: SUCCESS")) {
             setSeg1(1f);
-            setSeg2(1f, "Verified", 0xFFFFFFFF);
+            setSeg2(1f, getString(R.string.progress_verified), 0xFFFFFFFF);
         }
         if (exploitPhase.equals("cleanup") && t.startsWith("restoring")) {
             cleanupSteps++;
@@ -515,9 +519,9 @@ public class MainActivity extends Activity implements IReporter {
         mExec.execute(this::refreshRecovery);
 
         // SU Manager card: upstream 3.2 deleted the bundled assets/ksud, so the
-        // exploit stages libksud.so out of the chosen manager's
+        // exploit stages the ksud daemon out of the chosen manager's
         // nativeLibraryDir and refuses to run without one. Only apps that
-        // actually ship that library are offered.
+        // actually ship that binary are offered.
         loadSuManagerPref();
         binding.rowSuManager.setOnClickListener(v -> {
             v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
@@ -533,8 +537,8 @@ public class MainActivity extends Activity implements IReporter {
                 .getBoolean("disable_modules", false));
         moduleRefresh = false;
         binding.modulesSubtitle.setText(binding.switchModules.isChecked()
-                ? "Enabled - Active at next reroot"
-                : "Disabled - No Modules on reroot");
+                ? getString(R.string.modules_enabled)
+                : getString(R.string.modules_disabled));
         binding.switchModules.setOnCheckedChangeListener((btn, on) -> {
             if (moduleRefresh) return;
             btn.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
@@ -624,7 +628,7 @@ public class MainActivity extends Activity implements IReporter {
                 && last.toLowerCase().contains("=== exploit failed");
         if (rootedNow || lastSuccess) {
             binding.twoStep.setSeg1(1f, "100%");
-            binding.twoStep.setSeg2(1f, "Verified", 0xFFFFFFFF);
+            binding.twoStep.setSeg2(1f, getString(R.string.progress_verified), 0xFFFFFFFF);
         } else if (lastFailed) {
             setFailedState();
         }
@@ -635,14 +639,14 @@ public class MainActivity extends Activity implements IReporter {
             if (!runArmed) {
                 runArmed = true;
                 v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-                binding.btnRun.setText("Are you sure");
+                binding.btnRun.setText(R.string.run_confirm);
                 return;
             }
             runArmed = false;
             v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             running = true;
             binding.btnRun.setEnabled(false);
-            binding.btnRun.setText("Running");
+            binding.btnRun.setText(R.string.running);
             // Same dark greyed-out styling as the Rooted state.
             binding.btnRun.setTextColor(0xFF6E6E6E);
             binding.btnRun.setBackgroundTintList(ColorStateList.valueOf(0xFF1F1F1F));
@@ -700,7 +704,7 @@ public class MainActivity extends Activity implements IReporter {
             // -- Open Github Page row --
             TextView ghRow = new TextView(this);
             ghRow.setBackgroundResource(R.drawable.menu_row_highlight);
-            ghRow.setText("Open Github Page");
+            ghRow.setText(R.string.open_github);
             ghRow.setGravity(android.view.Gravity.CENTER_VERTICAL | android.view.Gravity.START);
             ghRow.setPadding((int) (20 * md), 0, 0, 0);
             ghRow.setTextColor(0xFFE8E8E8);
@@ -723,7 +727,7 @@ public class MainActivity extends Activity implements IReporter {
             //    word in it. --
             TextView rlRow = new TextView(this);
             rlRow.setBackgroundResource(R.drawable.menu_row_highlight);
-            rlRow.setText("Reset UI Layout");
+            rlRow.setText(R.string.reset_layout);
             rlRow.setGravity(android.view.Gravity.CENTER_VERTICAL | android.view.Gravity.START);
             rlRow.setPadding((int) (20 * md), 0, 0, 0);
             rlRow.setTextColor(0xFFE8E8E8);
@@ -753,7 +757,7 @@ public class MainActivity extends Activity implements IReporter {
             exRow.setPadding((int) (20 * md), 0, (int) (20 * md), 0);
             exRow.setBackgroundResource(R.drawable.menu_row_highlight);
             TextView exText = new TextView(this);
-            exText.setText("Expert Mode");
+            exText.setText(R.string.expert_mode);
             exText.setTextColor(0xFFE8E8E8);
             exText.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
             exRow.addView(exText, new android.widget.LinearLayout.LayoutParams(
@@ -842,8 +846,8 @@ public class MainActivity extends Activity implements IReporter {
      *  disabled toggles, titles suffixed with (Expert). */
     private void applyExpertMode() {
         boolean ok = expertMode;
-        binding.tvAutorunTitle.setText(ok ? "Autorun" : "Autorun (Expert)");
-        binding.tvRebootTitle.setText(ok ? "Auto reboot" : "Auto reboot (Expert)");
+        binding.tvAutorunTitle.setText(ok ? R.string.autorun : R.string.autorun_expert);
+        binding.tvRebootTitle.setText(ok ? R.string.auto_reboot : R.string.auto_reboot_expert);
         binding.tvAutorunTitle.setTextColor(ok ? 0xFFFFFFFF : 0xFF6E6E6E);
         binding.tvAutorunDesc.setTextColor(ok ? 0xFF9E9E9E : 0xFF5A5A5A);
         binding.tvRebootTitle.setTextColor(ok ? 0xFFFFFFFF : 0xFF6E6E6E);
@@ -949,7 +953,7 @@ public class MainActivity extends Activity implements IReporter {
             b.setImageTintList(ColorStateList.valueOf(0xFF3A3A3C));
             b.setScaleType(android.widget.ImageView.ScaleType.CENTER);
             b.setPadding(0, 0, 0, 0);
-            b.setContentDescription("Hide card");
+            b.setContentDescription(getString(R.string.hide_card));
             // Above the lifted card (18dp), below the menu dim layer (30dp).
             b.setElevation(26 * md);
             b.setVisibility(View.GONE);
@@ -1223,13 +1227,13 @@ public class MainActivity extends Activity implements IReporter {
         // The subtitle is the whole message. Nothing is announced over the bottom
         // of the screen for a switch the user can already see move.
         binding.modulesSubtitle.setText(on
-                ? "Enabled - Active at next reroot"
-                : "Disabled - No Modules on reroot");
+                ? R.string.modules_enabled
+                : R.string.modules_disabled);
     }
 
     // ---- SU manager picker --------------------------------------------------
 
-    /** One candidate: an app that actually ships libksud.so. */
+    /** One candidate: an app that actually ships a ksud binary. */
     private static final class SuManagerEntry {
         final String packageName;
         final CharSequence label;
@@ -1240,7 +1244,7 @@ public class MainActivity extends Activity implements IReporter {
         }
     }
 
-    /** Every installed app carrying libksud.so in its native lib dir - exactly
+    /** Every installed app with a ksud binary in its native lib dir - exactly
      *  the set ExploitRunner.stageAssets() can use, so anything listed here is
      *  guaranteed to pass the runtime check too. */
     private List<SuManagerEntry> scanSuManagers() {
@@ -1249,42 +1253,89 @@ public class MainActivity extends Activity implements IReporter {
         for (ApplicationInfo ai : pm.getInstalledApplications(0)) {
             if (ai.packageName.equals(getPackageName())) continue;
             if (ai.nativeLibraryDir == null) continue;
-            if (!new File(ai.nativeLibraryDir, "libksud.so").exists()) continue;
+            if (ExploitRunner.findKsud(ai) == null) continue;
             out.add(new SuManagerEntry(ai.packageName, pm.getApplicationLabel(ai)));
         }
         out.sort((a, b) -> a.label.toString().compareToIgnoreCase(b.label.toString()));
         return out;
     }
 
-    /** Restores the saved selection, dropping it if that app is gone or no
-     *  longer ships libksud.so. */
+    /** Restores the saved selection. The label comes straight from
+     *  PackageManager; whether that app still ships a usable ksud is settled on
+     *  a worker, since the scan reads every candidate binary. */
     private void loadSuManagerPref() {
         SharedPreferences sp = mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE);
         String saved = sp.getString("su_manager", null);
         suManagerPkg = null;
         suManagerLabel = null;
         if (saved != null) {
-            for (SuManagerEntry e : scanSuManagers()) {
-                if (e.packageName.equals(saved)) {
-                    suManagerPkg = e.packageName;
-                    suManagerLabel = e.label;
-                    break;
-                }
+            try {
+                ApplicationInfo ai = getPackageManager().getApplicationInfo(saved, 0);
+                suManagerPkg = saved;
+                suManagerLabel = getPackageManager().getApplicationLabel(ai);
+            } catch (PackageManager.NameNotFoundException e) {
+                sp.edit().remove("su_manager").apply();
             }
-            if (suManagerPkg == null) sp.edit().remove("su_manager").apply();
         }
+        applySuManagerSubtitle();
+        if (suManagerPkg != null) {
+            final String pkg = suManagerPkg;
+            mExec.execute(() -> {
+                boolean usable;
+                try {
+                    usable = ExploitRunner.findKsud(
+                            getPackageManager().getApplicationInfo(pkg, 0)) != null;
+                } catch (PackageManager.NameNotFoundException e) {
+                    usable = false;
+                }
+                if (!usable) runOnUiThread(this::clearSuManagerSelection);
+            });
+        }
+    }
+
+    private void applySuManagerSubtitle() {
         binding.suManagerSubtitle.setText(suManagerPkg == null
-                ? "Not selected - required"
-                : suManagerLabel + "  (" + suManagerPkg + ")");
+                ? getString(R.string.su_manager_not_selected)
+                : getString(R.string.su_manager_selected, suManagerLabel, suManagerPkg));
         binding.suManagerSubtitle.setTextColor(suManagerPkg == null
                 ? 0xFFE57373 : 0xFF9E9E9E);
     }
 
+    private void clearSuManagerSelection() {
+        mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE)
+                .edit().remove("su_manager").apply();
+        suManagerPkg = null;
+        suManagerLabel = null;
+        applySuManagerSubtitle();
+        updateRunButton();
+    }
+
+    /** Opens the picker from the cached scan, refreshing it on a worker for the
+     *  next open. The first open has to wait for that scan, so it runs there
+     *  too instead of blocking the main thread. */
+    private void showSuManagerPopup() {
+        List<SuManagerEntry> cached = suManagerCache;
+        if (cached != null) {
+            buildSuManagerPopup(cached);
+            mExec.execute(() -> {
+                List<SuManagerEntry> fresh = scanSuManagers();
+                runOnUiThread(() -> suManagerCache = fresh);
+            });
+            return;
+        }
+        mExec.execute(() -> {
+            List<SuManagerEntry> fresh = scanSuManagers();
+            runOnUiThread(() -> {
+                suManagerCache = fresh;
+                buildSuManagerPopup(fresh);
+            });
+        });
+    }
+
     /** OneUI-style rounded popup list over the dim overlay - same look and feel
      *  as the overflow menu, so the picker does not look like a stock spinner. */
-    private void showSuManagerPopup() {
+    private void buildSuManagerPopup(List<SuManagerEntry> apps) {
         float md = getResources().getDisplayMetrics().density;
-        List<SuManagerEntry> apps = scanSuManagers();
         final android.widget.PopupWindow[] pwRef = {null};
 
         android.widget.LinearLayout box = new android.widget.LinearLayout(this);
@@ -1294,7 +1345,7 @@ public class MainActivity extends Activity implements IReporter {
 
         if (apps.isEmpty()) {
             TextView none = new TextView(this);
-            none.setText("No app with libksud.so found");
+            none.setText(R.string.su_manager_empty);
             none.setGravity(android.view.Gravity.CENTER_VERTICAL | android.view.Gravity.START);
             none.setPadding((int) (20 * md), (int) (12 * md), (int) (20 * md), (int) (12 * md));
             none.setTextColor(0xFF6E6E6E);
@@ -1398,7 +1449,8 @@ public class MainActivity extends Activity implements IReporter {
                 .edit().putString("su_manager", e.packageName).apply();
         suManagerPkg = e.packageName;
         suManagerLabel = e.label;
-        binding.suManagerSubtitle.setText(e.label + "  (" + e.packageName + ")");
+        binding.suManagerSubtitle.setText(
+                getString(R.string.su_manager_selected, e.label, e.packageName));
         binding.suManagerSubtitle.setTextColor(0xFF9E9E9E);
         updateRunButton();
     }
@@ -1421,7 +1473,7 @@ public class MainActivity extends Activity implements IReporter {
         }
         boolean ok = suManagerPkg != null;
         binding.btnRun.setEnabled(ok);
-        binding.btnRun.setText("Run exploit");
+        binding.btnRun.setText(R.string.run_exploit);
         binding.btnRun.setTextColor(ok ? 0xFFE0E0E0 : 0xFF6E6E6E);
         binding.btnRun.setBackgroundTintList(ColorStateList.valueOf(ok ? 0xFF7A7A7A : 0xFF1F1F1F));
         binding.btnRun.setStrokeColor(
@@ -1451,7 +1503,7 @@ public class MainActivity extends Activity implements IReporter {
         if (word <= 0) {
             // The font failed to load, so no title paint measured the headline. A
             // pill that just fits its own word is honest; a guessed width is not.
-            word = Math.round(binding.updateLabel.getPaint().measureText("Update"));
+            word = Math.round(binding.updateLabel.getPaint().measureText(getString(R.string.update)));
         }
         // Wider than the word it replaces. The headline's advance is exactly as wide
         // as a word, and a capsule cut to that reads as a badge clipped to its own
@@ -1865,13 +1917,16 @@ public class MainActivity extends Activity implements IReporter {
         box.setBackgroundResource(R.drawable.popup_bg);
         box.setPadding(0, (int) (6 * md), 0, (int) (6 * md));
 
-        box.addView(odinRow("DL/Recovery", dlRecoveryLabel(shown, vault), verdictValue), odinRowLp(md));
+        box.addView(odinRow(getString(R.string.dl_recovery), dlRecoveryLabel(shown, vault),
+                verdictValue), odinRowLp(md));
         box.addView(odinSep(md), odinSepLp(md));
-        box.addView(odinRow("Lockscreen", shown.lockscreenLabel()), odinRowLp(md));
+        box.addView(odinRow(getString(R.string.lockscreen), shown.lockscreenLabel(this)),
+                odinRowLp(md));
         box.addView(odinSep(md), odinSepLp(md));
-        box.addView(odinRow("Maintenance Mode", shown.maintenanceLabel()), odinRowLp(md));
+        box.addView(odinRow(getString(R.string.maintenance_mode), shown.maintenanceLabel(this)),
+                odinRowLp(md));
         box.addView(odinSep(md), odinSepLp(md));
-        box.addView(odinRow("Device", shown.deviceLabel()), odinRowLp(md));
+        box.addView(odinRow(getString(R.string.device), shown.deviceLabel(this)), odinRowLp(md));
 
         // Whether either switch below can be moved at all. Expert Mode arms them; the firmware has
         // to have something for them to do. A device whose firmware never gates download mode has
@@ -1889,7 +1944,7 @@ public class MainActivity extends Activity implements IReporter {
         box.addView(odinSep(md), odinSepLp(md));
         final OneUiSwitch[] writeSw = new OneUiSwitch[1];
         final TextView[] writeName = new TextView[1];
-        box.addView(odinToggleRow(switchName("Recovery Writer", writerLive, shown.supported),
+        box.addView(odinToggleRow(switchName(getString(R.string.recovery_writer), writerLive, shown.supported),
                 vault != null && vault.ok && vault.atCommand == 1, writerLive,
                 writeSw, writeName), odinRowLp(md));
         if (writerLive) {
@@ -1898,10 +1953,11 @@ public class MainActivity extends Activity implements IReporter {
                 // a root manager that is not answering must not be flippable into a loop of su
                 // calls. Its answer is the only thing allowed to move the thumb again.
                 writeSw[0].setEnabled(false);
-                writeName[0].setText(want ? "Writing flag ..." : "Clearing flag ...");
+                writeName[0].setText(want ? R.string.writing_flag : R.string.clearing_flag);
                 writeDmcFlag(want, answered -> {
                     verdictValue[0].setText(dlRecoveryLabel(shown, answered));
-                    writeName[0].setText(switchName("Recovery Writer", writerLive, shown.supported));
+                    writeName[0].setText(switchName(
+                            getString(R.string.recovery_writer), writerLive, shown.supported));
                     // What the vault answered, not what was asked for. The firmware-that-does-not
                     // -gate path hands back the vault as it was, which before a read is no vault
                     // at all - in which case the honest position is off.
@@ -1936,8 +1992,12 @@ public class MainActivity extends Activity implements IReporter {
         // owner has costs one suffix on a row they are already reading, and saves them finding out
         // by rebooting.
         final boolean wantAuto = sp.getBoolean(PREF_D2_AUTO, false);
-        String autoName = switchName("Autorun Writer", writerLive, shown.supported);
-        if (wantAuto && writerLive && !bootPathEnabled()) autoName += " (at reroot)";
+        String autoName = switchName(
+                getString(R.string.autorun_writer), writerLive, shown.supported);
+        if (wantAuto && writerLive && !bootPathEnabled()) {
+            autoName = getString(R.string.switch_name, autoName,
+                    getString(R.string.suffix_at_reroot));
+        }
         box.addView(odinToggleRow(autoName,
                 wantAuto, writerLive, autoSw, null), odinRowLp(md));
         autoSw[0].setOnCheckedChangeListener((view, checked) ->
@@ -2171,10 +2231,12 @@ public class MainActivity extends Activity implements IReporter {
      * writer switch controls is not given a row of its own any more; its thumb is that byte, on the
      * same card.
      */
-    private static String dlRecoveryLabel(D2Status.Result est, D2Writer.Vault v) {
-        if (!est.supported) return "Not gated here";
-        if (v != null && v.ok) return v.gated() ? "D2 Blocked" : "Allowed";
-        return "Unknown";
+    private String dlRecoveryLabel(D2Status.Result est, D2Writer.Vault v) {
+        if (!est.supported) return getString(R.string.verdict_not_gated);
+        if (v != null && v.ok) {
+            return getString(v.gated() ? R.string.verdict_blocked : R.string.verdict_allowed);
+        }
+        return getString(R.string.verdict_unknown);
     }
 
     /**
@@ -2184,9 +2246,12 @@ public class MainActivity extends Activity implements IReporter {
      * armed yet" and "will never be live here" is the difference between coming back later and
      * coming back never.
      */
-    private static String switchName(String base, boolean live, boolean supported) {
-        if (!supported) return base + " (no gate)";
-        return live ? base : base + " (Expert)";
+    private String switchName(String base, boolean live, boolean supported) {
+        if (!supported) {
+            return getString(R.string.switch_name, base, getString(R.string.suffix_no_gate));
+        }
+        return live ? base
+                : getString(R.string.switch_name, base, getString(R.string.suffix_expert));
     }
 
 
@@ -2197,10 +2262,10 @@ public class MainActivity extends Activity implements IReporter {
     private void setFailedState() {
         failedRun = true;
         binding.twoStep.setFailed(true);
-        binding.twoStep.setSeg1(seg1, "Failure");
-        binding.twoStep.setSeg2(1f, "Reboot", 0xFFE57373);
+        binding.twoStep.setSeg1(seg1, getString(R.string.progress_failure));
+        binding.twoStep.setSeg2(1f, getString(R.string.progress_reboot), 0xFFE57373);
         binding.btnRun.setEnabled(false);
-        binding.btnRun.setText("Run exploit");
+        binding.btnRun.setText(R.string.run_exploit);
         binding.btnRun.setTextColor(0xFF6E6E6E);
         binding.btnRun.setBackgroundTintList(ColorStateList.valueOf(0xFF1F1F1F));
         binding.btnRun.setStrokeColor(ColorStateList.valueOf(0xFF1F1F1F));
@@ -2216,7 +2281,7 @@ public class MainActivity extends Activity implements IReporter {
         int bg = (rooted || !ok) ? 0xFF1F1F1F : 0xFF7A7A7A;
         int stroke = (rooted || !ok) ? 0xFF1F1F1F : 0xFFA6A6A6;
         binding.btnRun.setEnabled(ok);
-        binding.btnRun.setText(rooted ? "Rooted" : "Run exploit");
+        binding.btnRun.setText(rooted ? R.string.rooted : R.string.run_exploit);
         binding.btnRun.setTextColor(fg);
         binding.btnRun.setBackgroundTintList(ColorStateList.valueOf(bg));
         binding.btnRun.setStrokeColor(ColorStateList.valueOf(stroke));
@@ -2473,7 +2538,7 @@ public class MainActivity extends Activity implements IReporter {
                 boolean rooted = new File("/dev/df").exists();
                 if (rooted) {
                     setRootedState(true);
-                    binding.twoStep.setSeg2(1f, "Verified", 0xFFFFFFFF);
+                    binding.twoStep.setSeg2(1f, getString(R.string.progress_verified), 0xFFFFFFFF);
                 } else {
                     setFailedState();
                     setRootedState(false);

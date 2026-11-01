@@ -30,8 +30,8 @@ public class TwoStepProgressView extends View {
 
     private float seg1 = 0f;
     private float seg2 = 0f;
-    private String leftLabel = "Waiting";
-    private String rightLabel = "Verification";
+    private String leftLabel;
+    private String rightLabel;
     private int rightColor = 0xFF8E8E8E;
     private boolean failed;
     private float greyMix = 0f;
@@ -42,6 +42,8 @@ public class TwoStepProgressView extends View {
     public TwoStepProgressView(Context context, AttributeSet attrs) {
         super(context, attrs);
         textPaint.setTextAlign(Paint.Align.CENTER);
+        leftLabel = context.getString(R.string.progress_waiting);
+        rightLabel = context.getString(R.string.progress_verification);
     }
 
     /** @param p 0..1 */
@@ -55,7 +57,7 @@ public class TwoStepProgressView extends View {
         seg2 = clamp(p);
         rightLabel = label;
         rightColor = labelColor;
-        if ("Verified".equals(label) && seg1 >= 1f) {
+        if (getContext().getString(R.string.progress_verified).equals(label) && seg1 >= 1f) {
             scheduleGreyOut();
         } else {
             cancelGreyOut();
@@ -73,8 +75,8 @@ public class TwoStepProgressView extends View {
     public void reset() {
         cancelGreyOut();
         failed = false;
-        setSeg1(0f, "Waiting");
-        setSeg2(0f, "Verification", 0xFFFFFFFF);
+        setSeg1(0f, getContext().getString(R.string.progress_waiting));
+        setSeg2(0f, getContext().getString(R.string.progress_verification), 0xFFFFFFFF);
     }
 
     /** When the bar reaches 100% + Verified, ease the fill from blue to grey
