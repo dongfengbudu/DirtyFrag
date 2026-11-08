@@ -1534,7 +1534,10 @@ public class MainActivity extends Activity implements IReporter {
 
         if (apps == null) {
             // Nothing has ever completed a scan; the spinner above is the whole
-            // truth, and no row below may claim more than it knows.
+            // truth, and no row below may claim more than it knows. Swap in an
+            // empty list: iterating null below is the crash that killed the
+            // first open of the picker on a fresh install.
+            apps = java.util.Collections.emptyList();
         } else if (apps.isEmpty()) {
             TextView none = new TextView(this);
             none.setText(R.string.su_manager_empty);
