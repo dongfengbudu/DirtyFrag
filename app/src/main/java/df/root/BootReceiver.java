@@ -53,7 +53,7 @@ public class BootReceiver extends BroadcastReceiver implements IReporter {
         // session. With it off, the exploit still roots the device but nothing
         // reboots. bootstrap reads this from the pref, not from argv.
         deCtx.getSharedPreferences("dfroot", Context.MODE_PRIVATE)
-                .edit().putBoolean("soft_reboot", autoSoftReboot).apply();
+                .edit().putBoolean("soft_reboot", autoSoftReboot).commit();
 
         PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
         PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "dfroot:boot");

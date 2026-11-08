@@ -27,6 +27,55 @@
   hang queued the manager scan behind it, which is what made the click stutter
   hardest exactly where opening the app online hid it again.
 
+### Auto reboot: it can now fail in only one place, and says which
+A run with **Auto reboot** on rooted the phone and then did nothing: no soft reboot,
+and no line in the log to say why. Four separate things were needed for that switch to
+do what its label says, and three of them could fail silently.
+
+- **The switch could not be seen from where the decision is made.** `bootstrap` read the
+  first 4 KB of `shared_prefs/dfroot.xml` and looked for `soft_reboot` inside that slice;
+  SharedPreferences writes its keys in hash order, so which key falls off the end of a
+  fixed buffer is the hash function's choice. The persisted manager list added in this
+  release is what carried the file past 4 KB - after it, a soft_reboot sitting beyond the
+  window read exactly like a soft_reboot nobody turned on. The whole file is read now,
+  and the mirror of the Autorun choice uses `commit()` instead of `apply()` in both
+  places that write it, because the reader is a process this app shares nothing with.
+- **There was nothing to ask for the reboot.** The reboot was requested by exec'ing the
+  hard-coded path `/data/adb/ksud` and its exit code was discarded. That path is what a
+  *flashed* KernelSU installs, and in this flow the phone is not flashed and had no root
+  to install anything with - the staged copy in the app's own device-protected directory
+  exists precisely because the manager's userspace is not on the path. The exec returned
+  127 and the run carried on. The request now goes to the first ksud that is actually
+  there: `/data/adb/ksud`, then `/data/adb/ksu/bin/ksud`, then the staged binary this run
+  knows is real.
+- **A soft reboot is still the only kind asked for.** Nothing here falls back to
+  `sys.powerctl`, because that is a full reboot: it would take the kernel, and with it the
+  page-cache patch the root lives in, which is not what the switch promises. What changed
+  is only which ksud gets the request.
+- **The wait for the module load had no end.** The old code polled `late-load` forever
+  before asking, on a daemon that had already loaded; a ksud that stays resident with its
+  original cmdline matched, and the phone waited out the boot instead of rebooting into
+  the modules it had just loaded. The wait is capped at 30 s.
+- **The log now carries the verdict.** bootstrap writes one line - what it asked, or why
+  the asking failed - into its own device-protected directory, and the app reads it back
+  after the run: `soft reboot: attempted: …`, `failed: … soft-reboot returned 127`, or
+  `never asked for - this run did not see the switch on`. A run that rebooted never gets
+  to the reading, which is itself the good outcome. The read waits on its own thread:
+  the answer arrives seconds after the run printed its own result.
+- The README's FAQ answer for "the log says SUCCESS but I have no root" was the only
+  place this failure mode was documented; it stays, but the log now names the cause
+  instead of leaving the owner to guess.
+
+### Auto reboot is now switchable with Expert mode alone
+The switch itself never answered a tap unless Autorun (boot start) was also on:
+`applyExpertMode` required both, and `OneUiSwitch.performClick()` returns false while
+disabled, so the row gave no animation, no toast, no feedback at all - "nothing happens"
+was the whole UX of a locked option. And the lock was wrong anyway: `auto_soft_reboot`
+is what a **manual** run mirrors into the pref bootstrap reads, so the row controls the
+manual path just as much as the boot path, while the boot path already keeps its own gate
+(BootReceiver is component-disabled unless Autorun is on). Expert mode remains the one
+gate; the boot-start switch no longer enables or disables anything.
+
 ## 1.17
 
 Based on upstream DFRoot 4.6 - 4.7, merged into this fork. `versionCode` 34, `versionName` 1.17.

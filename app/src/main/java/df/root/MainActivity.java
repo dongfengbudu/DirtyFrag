@@ -841,14 +841,12 @@ public class MainActivity extends Activity implements IReporter {
                 checked ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED
                         : PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                 PackageManager.DONT_KILL_APP);
-            binding.switchAutoSoftReboot.setEnabled(checked);
         });
 
         boolean autoSoftReboot = createDeviceProtectedStorageContext()
                 .getSharedPreferences("dfroot", MODE_PRIVATE)
                 .getBoolean("auto_soft_reboot", false);
         binding.switchAutoSoftReboot.setChecked(autoSoftReboot);
-        binding.switchAutoSoftReboot.setEnabled(bootEnabled);
         binding.switchAutoSoftReboot.setOnCheckedChangeListener((btn, checked) ->
             createDeviceProtectedStorageContext()
                 .getSharedPreferences("dfroot", MODE_PRIVATE)
@@ -881,8 +879,14 @@ public class MainActivity extends Activity implements IReporter {
         binding.tvRebootTitle.setTextColor(ok ? 0xFFFFFFFF : 0xFF6E6E6E);
         binding.tvRebootDesc.setTextColor(ok ? 0xFF9E9E9E : 0xFF5A5A5A);
         binding.switchBootStart.setEnabled(ok);
-        binding.switchAutoSoftReboot.setEnabled(ok
-                && binding.switchBootStart.isChecked());
+        // Auto reboot belongs to Autorun at boot only because BootReceiver is
+        // the only thing that reads the switch at boot; a manual run reads it
+        // too (runExploit mirrors it into the pref bootstrap reads). Locking
+        // it behind the boot-start switch therefore hid a manual-run option
+        // behind an unrelated opt-in - OneUiSwitch swallows the tap of a
+        // disabled switch entirely, so the row simply looked dead. Expert mode
+        // is the one gate that means something for both paths.
+        binding.switchAutoSoftReboot.setEnabled(ok);
     }
 
     // ---- Movable card stack (VIS1 - VIS5) -----------------------------------
@@ -2692,13 +2696,83 @@ public class MainActivity extends Activity implements IReporter {
         }
     }
 
+    /** Where bootstrap leaves its one line about the soft reboot. It sits in the
+     *  device-protected directory bootstrap itself is execed from: a file root
+     *  creates there is world-readable and this app owns the directory, which is
+     *  the same arrangement the staged ksud relies on going the other way. */
+    private File softRebootReportFile() {
+        return new File(mDeCtx.getFilesDir().getParentFile(), "soft_reboot_status");
+    }
+
+    /** bootstrap's verdict, if it wrote one, or null when this run never reached
+     *  the request at all - a different thing from a request that failed, and
+     *  the owner needs to be told which of the two they are looking at.
+     *
+     *  <p>The wait is what makes it honest. bootstrap writes "attempted:" the
+     *  moment it asks ksud and rewrites the line with "failed:" only if that
+     *  request came back, which happens after late-load has finished - so a
+     *  "failed:" is worth returning the instant it appears, while an
+     *  "attempted:" only counts as the answer once it has sat there long enough
+     *  for a rewrite to have arrived. A run whose request worked takes this
+     *  process with it and never reads any of this. */
+    private String readSoftRebootReport() {
+        File f = softRebootReportFile();
+        String seen = null;
+        int stable = 0;
+        for (int i = 0; i < 100; i++) {
+            String now = readOneLine(f);
+            if (now != null) {
+                if (now.startsWith("failed")) return now;
+                stable = now.equals(seen) ? stable + 1 : 0;
+                if (stable > 24) return now;
+                seen = now;
+            }
+            try {
+                Thread.sleep(500L);
+            } catch (InterruptedException e) {
+                break;
+            }
+        }
+        return seen;
+    }
+
+    /** The whole file as one trimmed line, or null when it is absent or empty -
+     *  bootstrap rewrites the same path, so an empty read is a write in flight. */
+    private String readOneLine(File f) {
+        if (!f.exists()) return null;
+        try (java.io.FileInputStream in = new java.io.FileInputStream(f);
+             java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream()) {
+            byte[] buf = new byte[1024];
+            for (int n; (n = in.read(buf)) > 0; ) bos.write(buf, 0, n);
+            String s = bos.toString(java.nio.charset.StandardCharsets.UTF_8.name()).trim();
+            return s.isEmpty() ? null : s;
+        } catch (Exception e) {
+            Log.i(TAG, "soft reboot report unreadable: " + e);
+            return null;
+        }
+    }
+
+    /** The soft-reboot verdict, into the log, seconds after the run that asked
+     *  for it has already printed its own result. */
+    private void reportSoftRebootOutcome() {
+        String sr = readSoftRebootReport();
+        report("soft reboot: " + (sr != null ? sr
+                : "never asked for - this run did not see the switch on") + "\n");
+    }
+
     private void runExploit() {
         // bootstrap.c reads soft_reboot straight out of the DE prefs, so mirror
         // the Autorun card's choice into the key it reads right before launch.
+        // commit(), not apply(): that read happens in a process this one shares
+        // nothing with, off the disk, and apply() only promises to get the value
+        // there eventually. A lost write is a run that silently does not reboot.
         SharedPreferences sp = mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE);
         boolean autoSoftReboot = sp.getBoolean("auto_soft_reboot", false);
-        sp.edit().putBoolean("soft_reboot", autoSoftReboot).apply();
+        sp.edit().putBoolean("soft_reboot", autoSoftReboot).commit();
+        // Last boot's verdict is not this run's answer.
+        softRebootReportFile().delete();
         lastFailReason = null;
+        boolean wantSoftRebootReport = false;
         try {
             int rc = ExploitRunner.run(mDeCtx, this);
             if (rc != 0) {
@@ -2710,6 +2784,7 @@ public class MainActivity extends Activity implements IReporter {
                         : "failed to patch files";
                 report("\n=== exploit failed: " + why + " ===\n");
             }
+            wantSoftRebootReport = rc == 0 && autoSoftReboot;
             mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE)
                     .edit().putBoolean("last_run_success", rc == 0).apply();
         } catch (Exception e) {
@@ -2733,6 +2808,13 @@ public class MainActivity extends Activity implements IReporter {
                 // describing a boot that ended minutes ago.
                 if (rooted) mExec.execute(MainActivity.this::refreshRecovery);
             });
+            // The soft-reboot verdict arrives seconds after the run that asked
+            // for it, and it waits on its own thread rather than on mExec: that
+            // one thread is the recovery refresh's queue too, and a log line is
+            // not worth holding the screen's next fact behind a 45 s wait.
+            if (wantSoftRebootReport) {
+                new Thread(this::reportSoftRebootOutcome, "dfroot-soft-reboot").start();
+            }
         }
     }
 

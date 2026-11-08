@@ -13,6 +13,10 @@
 #define KSUD       "/data/adb/ksud"
 #define PREFS_PATH "/data/user_de/0/df.root/shared_prefs/dfroot.xml"
 #define MODULES_DIR "/data/adb/modules"
+/* One line, written by this process and read back by the app after a run; see
+ * soft_reboot_report(). The app's own DE dir, world-readable once root puts a
+ * file in it - the same directory the staged ksud above sits in. */
+#define SR_REPORT  "/data/user_de/0/df.root/soft_reboot_status"
 
 static int pref_true(const char *buf, const char *key)
 {
@@ -31,8 +35,19 @@ static int read_prefs(char *su_manager, size_t su_manager_size, int *soft_reboot
     int fd = open(PREFS_PATH, O_RDONLY);
     if (fd < 0) return -1;
 
-    char buf[4096];
-    int n = read(fd, buf, sizeof(buf) - 1);
+    /* Read the whole file, not a leading slice of it. SharedPreferences writes
+     * its keys in HashMap order, so which key lands past the end of a short
+     * buffer is the hash function's choice, not ours - and a soft_reboot that
+     * sits past the end reads exactly like a soft_reboot that was never turned
+     * on. The persisted manager list the picker now keeps is what pushed this
+     * file past the old 4 KB window. */
+    static char buf[65536];
+    int n = 0;
+    while (n < (int)sizeof(buf) - 1) {
+        int r = read(fd, buf + n, sizeof(buf) - 1 - n);
+        if (r <= 0) break;
+        n += r;
+    }
     close(fd);
     if (n <= 0) return -1;
     buf[n] = '\0';
@@ -173,6 +188,52 @@ static void touch(const char *path)
         close(fd);
 }
 
+/* Which ksud can be asked for a soft reboot.
+ *
+ * The manager's own userspace is the only thing allowed to reboot this device:
+ * a soft reboot restarts Android's userspace and leaves the kernel - and the
+ * page-cache patch this root lives in - alone, which is what the Auto reboot
+ * switch promises. A plain `setprop sys.powerctl reboot` would be a FULL
+ * reboot and drop the root, so nothing here may fall back to it; the choice on
+ * offer is only which ksud to ask.
+ *
+ * The old code named /data/adb/ksud and nothing else. That is the path a
+ * *flashed* KernelSU installs, and in this flow the phone is not flashed and
+ * had no root to install anything with - the staged copy above exists precisely
+ * because the manager's userspace is not on the path. On such a device the exec
+ * failed with 127, run_ctx's return was discarded, and the owner saw a root
+ * that simply never rebooted with nothing in the log to explain it. The staged
+ * binary is the one this flow knows is real, so it is now the last resort
+ * instead of the only candidate. */
+static const char *soft_reboot_ksud(void)
+{
+    static const char *const cands[] = {
+        KSUD,
+        "/data/adb/ksu/bin/ksud",
+        KSUD_STAGE,
+    };
+    size_t i;
+    for (i = 0; i < sizeof(cands) / sizeof(cands[0]); i++)
+        if (access(cands[i], X_OK) == 0)
+            return cands[i];
+    return NULL;
+}
+
+/* The verdict above, one line, for the app to read back. Written BEFORE the
+ * attempt as well as after a failed one: the reboot a successful attempt
+ * triggers takes this process - and the app reading over its shoulder - with
+ * it, so an accepted request still needs to be on disk. */
+static void soft_reboot_report(const char *text)
+{
+    int fd = open(SR_REPORT, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+    if (fd < 0)
+        return;
+    if (write(fd, text, strlen(text)) < 0) {
+        /* Nothing to do about it; the file is a courtesy, not the mechanism. */
+    }
+    close(fd);
+}
+
 /* Mark every installed module disabled before ksud runs. A broken module
  * otherwise loads on the next boot and bootloops the device. */
 static int disable_modules(void)
@@ -223,8 +284,37 @@ int main(void)
     if (run_ctx(NULL, (char *[]){ KSUD_STAGE, "late-load", "--package-name", su_manager, NULL }) == 0) {
         touch("/dev/dfm6");
         if (soft_reboot) {
-            while (late_load_running()) sleep(1);
-            run_ctx("u:r:ksu:s0", (char *[]){ KSUD, "soft-reboot", NULL });
+            char line[256];
+            const char *ksud;
+            int rc, waited = 0;
+
+            /* late-load is expected to exit on its own, and the reboot has to
+             * wait for it: rebooting under a daemon that is still loading its
+             * modules loses them. But a resident ksud that still carries its
+             * original cmdline matched the old unbounded wait, and that waited
+             * out the phone rather than the module load. */
+            while (late_load_running() && waited++ < 30)
+                sleep(1);
+
+            ksud = soft_reboot_ksud();
+            if (!ksud) {
+                snprintf(line, sizeof(line),
+                         "failed: no ksud to ask - tried %s, /data/adb/ksu/bin/ksud and %s",
+                         KSUD, KSUD_STAGE);
+                soft_reboot_report(line);
+            } else {
+                snprintf(line, sizeof(line), "attempted: %s", ksud);
+                soft_reboot_report(line);
+                rc = run_ctx("u:r:ksu:s0",
+                             (char *[]){ (char *)ksud, "soft-reboot", NULL });
+                if (rc != 0) {
+                    /* 127 is the exec itself failing: present, executable, and
+                     * still not something this kernel will run. */
+                    snprintf(line, sizeof(line),
+                             "failed: %s soft-reboot returned %d", ksud, rc);
+                    soft_reboot_report(line);
+                }
+            }
         }
     } else {
         touch("/dev/dfme2");
