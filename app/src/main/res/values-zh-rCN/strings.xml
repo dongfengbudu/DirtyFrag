@@ -12,6 +12,8 @@
     <string name="su_manager_selected">%1$s（%2$s）</string>
     <string name="su_manager_empty">未找到包含 ksud 二进制的应用</string>
     <string name="su_manager_scanning">正在搜索管理器…</string>
+    <string name="su_manager_rescan">重新搜索</string>
+    <string name="su_manager_last_scan">上次搜索：%1$s</string>
     <string name="select">选择</string>
 
     <string name="autorun">自动运行</string>

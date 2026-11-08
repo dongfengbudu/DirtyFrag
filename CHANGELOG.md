@@ -7,10 +7,14 @@
   the list only when it landed. The scan is the expensive thing about this app:
   every installed app's native lib dir, every library over 1 MB opened, its
   program headers walked one seek per header, then two full 64 KB-chunk passes
-  over the same bytes for the `late-load` and `ksud` fingerprints. It now runs at
-  background priority on its own worker, starts at resume - the only moment the
-  installed set can have changed - and the click is served from the cache; a
-  first open that beats the scan says so and fills itself in when it lands.
+  over the same bytes for the `late-load` and `ksud` fingerprints.
+- The list is now persisted in the DE prefs and restored at startup, so the
+  picker always opens straight into it. A new **Search again** row at the foot
+  of the list asks for a fresh scan, on the owner's schedule rather than under
+  every open; while one runs a spinner row on top says so, the footer names the
+  age of the list on screen, and the rows - and the window's height - replace
+  themselves when the fresh list lands. A fresh install has nothing cached, and
+  its first open runs the one automatic scan.
 - The scan itself got cheaper with the same result: the program-header table is
   read in one go instead of one `pread` per header, and both fingerprints are
   hunted in one pass over the file instead of two. The window hand-off that

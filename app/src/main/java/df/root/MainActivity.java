@@ -106,22 +106,17 @@ public class MainActivity extends Activity implements IReporter {
     /** Package name of the SU manager whose ksud binary gets staged, or null. */
     private String suManagerPkg;
     private CharSequence suManagerLabel;
-    /** The last full manager scan. Finding a ksud walks every installed app's
-     *  native lib dir and reads multi-MB binaries, so the result is cached and the
-     *  click that opens the picker is served from it. The cache is refreshed at
-     *  resume - when a manager could have been installed or removed - and not on
-     *  every open: re-scanning under the popup's own entrance animation is what
-     *  read as a stutter. See startSuManagerScan. */
+    /** The last full manager scan, persisted in the DE prefs and restored at
+     *  startup, so the click that opens the picker is always served from it.
+     *  Finding a ksud walks every installed app's native lib dir and reads
+     *  multi-MB binaries; a list a day old costs nothing to show and the
+     *  picker's Search again row is how the owner asks for a fresh one. */
     private List<SuManagerEntry> suManagerCache;
     /** True while a scan is in flight; the scan is one worker and one pass, so a
-     *  second click never queues a second one. Worker-written, main-thread-read,
-     *  so volatile rather than a race that happens to work. */
+     *  second request never queues a second one. Worker-written, main-thread-read
+     *  (the picker's spinner row reads it), so volatile rather than a race that
+     *  happens to work. */
     private volatile boolean suManagerScanRunning;
-    /** True when a scan is owed and has not been had yet. Set at resume - the only
-     *  moment the set of installed managers can have changed - and cleared by the
-     *  worker before each pass, so a resume that arrives mid-scan earns a second
-     *  pass instead of being lost. Same sharing, same reason. */
-    private volatile boolean suManagerScanWanted;
     /** The picker while it is on screen, so a scan that finishes underneath it
      *  refills it instead of leaving the owner staring at a list that is still
      *  searching. Main thread only. */
@@ -552,7 +547,9 @@ public class MainActivity extends Activity implements IReporter {
         // SU Manager card: upstream 3.2 deleted the bundled assets/ksud, so the
         // exploit stages the ksud daemon out of the chosen manager's
         // nativeLibraryDir and refuses to run without one. Only apps that
-        // actually ship that binary are offered.
+        // actually ship that binary are offered. The picker's list is the last
+        // persisted scan; a fresh install has none and scans on its first open.
+        restoreSuManagerCache();
         loadSuManagerPref();
         binding.rowSuManager.setOnClickListener(v -> {
             v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
@@ -1181,10 +1178,6 @@ public class MainActivity extends Activity implements IReporter {
     protected void onResume() {
         super.onResume();
         loadSuManagerPref();
-        // The list is refreshed here rather than under the finger: a manager can
-        // only have been installed or removed while the app was not looking, and a
-        // scan started now is finished long before the card is tapped.
-        startSuManagerScan();
         updateRunButton();
         startRootWatch();
     }
@@ -1345,48 +1338,93 @@ public class MainActivity extends Activity implements IReporter {
         updateRunButton();
     }
 
-    /** Runs the manager scan when one is owed, one pass at a time. It is asked for
-     *  at resume, so the answer is normally in hand before the card is tapped; a
-     *  resume that lands while a pass is still running is answered by a second pass
-     *  rather than dropped. The worker runs at background priority because the cost
-     *  is every installed app's native lib dir plus their ELF headers, and this is a
-     *  phone with a UI to animate. */
+    /** Runs one manager scan, one at a time. Asked for by the picker's Search
+     *  again row, and once by the first picker open of a fresh install - the
+     *  cache is otherwise filled from SharedPreferences at startup, so no click
+     *  ever waits on this. The worker runs at background priority because the
+     *  cost is every installed app's native lib dir plus their ELF headers, and
+     *  this is a phone with a UI to animate. */
     private void startSuManagerScan() {
-        suManagerScanWanted = true;
         if (suManagerScanRunning) return;
         suManagerScanRunning = true;
+        refillSuManagerPopup();  // the picker, if open, shows its spinner row now
         mScanExec.execute(() -> {
             android.os.Process.setThreadPriority(
                     android.os.Process.THREAD_PRIORITY_BACKGROUND);
+            final List<SuManagerEntry> fresh;
             try {
-                while (suManagerScanWanted) {
-                    suManagerScanWanted = false;
-                    final List<SuManagerEntry> fresh = scanSuManagers();
-                    mMain.post(() -> {
-                        suManagerCache = fresh;
-                        refillSuManagerPopup();
-                    });
-                }
-            } finally {
-                // An exception here must not leave the flag set: that would quiet
-                // the scanner for the rest of the process.
-                suManagerScanRunning = false;
+                fresh = scanSuManagers();
+            } catch (RuntimeException e) {
+                // An exception here must not leave the flag set: that would
+                // quiet the scanner for the rest of the process.
+                mMain.post(() -> suManagerScanRunning = false);
+                throw e;
             }
-            if (suManagerScanWanted) startSuManagerScan();
+            mMain.post(() -> {
+                suManagerScanRunning = false;
+                suManagerCache = fresh;
+                persistSuManagerCache(fresh);
+                refillSuManagerPopup();
+            });
         });
     }
 
-    /** Opens the picker straight from the cache. An owner who beats the first scan
-     *  to the card sees what it is doing, and the rows replace themselves when it
-     *  lands. */
+    /** The scan list and its timestamp, as JSON in the same DE prefs file
+     *  bootstrap.c reads. Credential-protected storage would hold it fine too,
+     *  but this file is already the app's one cross-process truth and it is
+     *  device-encrypted; a stale manager list is worth a fast open, not a
+     *  fresh one. */
+    private void persistSuManagerCache(List<SuManagerEntry> entries) {
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray();
+            for (SuManagerEntry e : entries) {
+                arr.put(new org.json.JSONObject()
+                        .put("pkg", e.packageName).put("label", e.label.toString()));
+            }
+            mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE).edit()
+                    .putString("su_manager_list", arr.toString())
+                    .putLong("su_manager_list_at", System.currentTimeMillis())
+                    .apply();
+        } catch (org.json.JSONException e) {
+            Log.i(TAG, "manager cache: not persisted: " + e);
+        }
+    }
+
+    /** Fills the in-memory cache from the last persisted scan, so the picker has
+     *  a real list before this process has scanned anything. */
+    private void restoreSuManagerCache() {
+        String json = mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE)
+                .getString("su_manager_list", null);
+        if (json == null) return;
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray(json);
+            List<SuManagerEntry> out = new ArrayList<>();
+            for (int i = 0; i < arr.length(); i++) {
+                org.json.JSONObject o = arr.optJSONObject(i);
+                String pkg = o == null ? null : o.optString("pkg", "");
+                if (pkg.isEmpty()) continue;
+                String label = o.optString("label", pkg);
+                out.add(new SuManagerEntry(pkg, label));
+            }
+            suManagerCache = out;
+        } catch (org.json.JSONException e) {
+            Log.i(TAG, "manager cache: unreadable, ignored: " + e);
+        }
+    }
+
+    /** Opens the picker from the persisted cache. A fresh install has nothing
+     *  cached: that open starts the one automatic scan and says so while it
+     *  runs, because the alternative is telling a new owner no manager exists
+     *  when nothing has looked yet. */
     private void showSuManagerPopup() {
         if (suManagerCache == null) startSuManagerScan();
         buildSuManagerPopup(suManagerCache);
     }
 
-    /** Replaces the rows of a picker that is already open with a scan that has just
-     *  landed. A PopupWindow takes its size at show time and does not grow on its
-     *  own, so the window is updated with the new measured height. */
+    /** Replaces the rows of a picker that is already open - with a scan that has
+     *  just landed, or with the spinner row as one starts. A PopupWindow takes
+     *  its size at show time and does not grow on its own, so the window is
+     *  updated with the new measured height. */
     private void refillSuManagerPopup() {
         if (suManagerPopup == null || suManagerBox == null) return;
         fillSuManagerRows(suManagerBox, suManagerCache);
@@ -1464,25 +1502,40 @@ public class MainActivity extends Activity implements IReporter {
                 .start();
     }
 
-    /** The picker's rows. A null list means the first scan has not landed yet, and
-     *  says so - an empty list here would read as "no manager is installed", which
-     *  is a different and much worse claim. */
+    /** The picker's rows. While a scan runs the list stays where it is and a
+     *  spinner row on top says so; a null list (fresh install, first scan in
+     *  flight) has nothing under the spinner yet, and the spinner is what it
+     *  shows. A stale list never reads as "nothing installed": the empty row
+     *  only appears for a scan that finished and found nothing. The footer
+     *  holds the one fact about the list's age and the one control that can
+     *  change it. */
     private void fillSuManagerRows(android.widget.LinearLayout box, List<SuManagerEntry> apps) {
         float md = getResources().getDisplayMetrics().density;
         box.removeAllViews();
 
-        if (apps == null) {
-            TextView busy = new TextView(this);
-            busy.setText(R.string.su_manager_scanning);
+        if (suManagerScanRunning) {
+            android.widget.LinearLayout busy = new android.widget.LinearLayout(this);
+            busy.setOrientation(android.widget.LinearLayout.HORIZONTAL);
             busy.setGravity(android.view.Gravity.CENTER_VERTICAL | android.view.Gravity.START);
-            busy.setPadding((int) (20 * md), (int) (12 * md), (int) (20 * md), (int) (12 * md));
-            busy.setTextColor(0xFF6E6E6E);
-            busy.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
+            busy.setPadding((int) (20 * md), (int) (10 * md), (int) (20 * md), (int) (10 * md));
+            android.widget.ProgressBar spinner = new android.widget.ProgressBar(this);
+            spinner.setIndeterminate(true);
+            android.widget.LinearLayout.LayoutParams spLp =
+                    new android.widget.LinearLayout.LayoutParams((int) (16 * md), (int) (16 * md));
+            spLp.setMargins(0, 0, (int) (10 * md), 0);
+            busy.addView(spinner, spLp);
+            TextView busyT = new TextView(this);
+            busyT.setText(R.string.su_manager_scanning);
+            busyT.setTextColor(0xFF9E9E9E);
+            busyT.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
+            busy.addView(busyT);
             box.addView(busy);
-            return;
         }
 
-        if (apps.isEmpty()) {
+        if (apps == null) {
+            // Nothing has ever completed a scan; the spinner above is the whole
+            // truth, and no row below may claim more than it knows.
+        } else if (apps.isEmpty()) {
             TextView none = new TextView(this);
             none.setText(R.string.su_manager_empty);
             none.setGravity(android.view.Gravity.CENTER_VERTICAL | android.view.Gravity.START);
@@ -1534,6 +1587,40 @@ public class MainActivity extends Activity implements IReporter {
             box.addView(col, new android.widget.LinearLayout.LayoutParams(
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT, (int) (56 * md)));
         }
+
+        // Footer: how old the list is, then the manual rescan. A scan already
+        // running greys the row out rather than queueing a second pass.
+        long at = mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE)
+                .getLong("su_manager_list_at", 0L);
+        if (at != 0L && !suManagerScanRunning) {
+            TextView when = new TextView(this);
+            when.setText(getString(R.string.su_manager_last_scan,
+                    new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+                            .format(new java.util.Date(at))));
+            when.setPadding((int) (20 * md), (int) (8 * md), (int) (20 * md), 0);
+            when.setTextColor(0xFF6E6E6E);
+            when.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 11);
+            box.addView(when);
+        }
+
+        android.view.View divider = new android.view.View(this);
+        divider.setBackgroundColor(0x22FFFFFF);
+        box.addView(divider, new android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT, (int) (1 * md)));
+
+        TextView again = new TextView(this);
+        again.setText(R.string.su_manager_rescan);
+        again.setGravity(android.view.Gravity.CENTER_VERTICAL | android.view.Gravity.START);
+        again.setPadding((int) (20 * md), (int) (12 * md), (int) (20 * md), (int) (12 * md));
+        again.setBackgroundResource(R.drawable.menu_row_highlight);
+        again.setTextColor(suManagerScanRunning ? 0xFF5C5C5C : 0xFFE8E8E8);
+        again.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
+        again.setOnClickListener(v2 -> {
+            if (suManagerScanRunning) return;
+            v2.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            startSuManagerScan();
+        });
+        box.addView(again);
     }
 
     /** Writes the DE pref that bootstrap.c reads as su_manager, then unlocks Run. */

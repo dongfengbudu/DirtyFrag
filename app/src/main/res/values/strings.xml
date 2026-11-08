@@ -12,6 +12,8 @@
     <string name="su_manager_selected">%1$s  (%2$s)</string>
     <string name="su_manager_empty">No app with a ksud binary found</string>
     <string name="su_manager_scanning">Searching for managers…</string>
+    <string name="su_manager_rescan">Search again</string>
+    <string name="su_manager_last_scan">Last search: %1$s</string>
     <string name="select">Select</string>
 
     <string name="autorun">Autorun</string>
