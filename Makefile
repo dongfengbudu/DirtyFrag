@@ -21,8 +21,12 @@ DDK_WF      := .github/workflows/build.yml
 DDK_IMAGE   ?= $(shell awk '/image: ghcr\.io\//{gsub(/.*image: /,"");gsub(/:.*$$/,"");print;exit}' $(DDK_WF))
 DDK_RELEASE ?= $(shell awk '/image: ghcr\.io\/ylarod\/ddk-min:/{sub(/.*-/,"");print;exit}' $(DDK_WF))
 
-SIGN_PASS  := df-ksu
-SIGN_ALIAS := df-ksu
+# app/build.gradle.kts hard-codes app/keystore.jks with alias/password "dirtyfrag"
+# (the README documents the same), so the Makefile has to generate exactly that -
+# it used to write ./keystore.jks with alias df-ksu plus a signing.properties the
+# gradle build never reads.
+SIGN_PASS  := dirtyfrag
+SIGN_ALIAS := dirtyfrag
 
 LKM_SRCS    := lkm/dfroot.c lkm/Makefile
 LKM_KOS     := $(KMIS:%=app/src/main/jni/ko/dfroot-%.ko)
@@ -34,22 +38,18 @@ APK_SRCS    := $(wildcard app/src/main/java/df/root/*.java \
                    app/src/main/AndroidManifest.xml \
                    app/build.gradle.kts \
                    app/src/main/jni/CMakeLists.txt
-APK   := out/DFRoot.apk
+APK   := out/dirtyfrag.apk
 
 
 .PHONY: all clean
 
 all: $(APK)
 
-keystore.jks:
+app/keystore.jks:
 	keytool -genkeypair -keystore $@ -storetype JKS \
 	    -storepass $(SIGN_PASS) -keypass $(SIGN_PASS) \
 	    -alias $(SIGN_ALIAS) -keyalg RSA -keysize 2048 -validity 10000 \
-	    -dname "CN=DFRoot"
-
-signing.properties: keystore.jks
-	printf 'KEYSTORE_FILE=../keystore.jks\nKEYSTORE_PASSWORD=%s\nKEY_ALIAS=%s\nKEY_PASSWORD=%s\n' \
-	    $(SIGN_PASS) $(SIGN_ALIAS) $(SIGN_PASS) > $@
+	    -dname "CN=DirtyFrag"
 
 $(LKM_KOS): $(LKM_SRCS)
 	@printf '\n\033[1;35m══  Building LKMs  ══\033[0m\n'; \
@@ -69,13 +69,15 @@ $(LKM_KOS): $(LKM_SRCS)
 	        ' || exit 1; \
 	done; \
 
-$(APK): signing.properties $(LKM_KOS) $(APK_SRCS)
-	@printf '\n\033[1;36m══  DFRoot APK  ══\033[0m\n'
+$(APK): app/keystore.jks $(LKM_KOS) $(APK_SRCS)
+	@printf '\n\033[1;36m══  DirtyFrag APK  ══\033[0m\n'
 	@printf '\033[1;35m  → gradle assembleRelease\033[0m\n'
 	./gradlew :app:assembleRelease
 	mkdir -p $(dir $@)
-	cp app/build/outputs/apk/release/DFRoot_*.apk $@
-	@printf '\033[1;32m  ✔  DFRoot APK  →  $@\033[0m\n'
+	@# build.gradle.kts pins the output name to dirtyfrag.apk (androidComponents
+	@# block), so the old DFRoot_*.apk glob never matches anything.
+	cp app/build/outputs/apk/release/dirtyfrag.apk $@
+	@printf '\033[1;32m  ✔  DirtyFrag APK  →  $@\033[0m\n'
 
 clean:
 	rm -f app/src/main/jni/splicehelper
