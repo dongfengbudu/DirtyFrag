@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### The SU-manager picker opens instantly
+- Opening the manager card used to start a full rescan under the finger and show
+  the list only when it landed. The scan is the expensive thing about this app:
+  every installed app's native lib dir, every library over 1 MB opened, its
+  program headers walked one seek per header, then two full 64 KB-chunk passes
+  over the same bytes for the `late-load` and `ksud` fingerprints. It now runs at
+  background priority on its own worker, starts at resume - the only moment the
+  installed set can have changed - and the click is served from the cache; a
+  first open that beats the scan says so and fills itself in when it lands.
+- The scan itself got cheaper with the same result: the program-header table is
+  read in one go instead of one `pread` per header, and both fingerprints are
+  hunted in one pass over the file instead of two. The window hand-off that
+  multi-MB binaries cross carries the byte dropped off the front, so a retained
+  match is never re-decided against the wrong left neighbour. Fuzzed against an
+  in-memory scan over the whole file at window sizes from 1 byte up.
+- The GitHub update check moved to its own worker. It holds a thread for
+  8 s + 8 s of timeouts whenever api.github.com is unreachable - every plain
+  connection from a mainland network - and on the old shared single thread that
+  hang queued the manager scan behind it, which is what made the click stutter
+  hardest exactly where opening the app online hid it again.
+
 ## 1.17
 
 Based on upstream DFRoot 4.6 - 4.7, merged into this fork. `versionCode` 34, `versionName` 1.17.

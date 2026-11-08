@@ -39,7 +39,20 @@ public class MainActivity extends Activity implements IReporter {
 
     private ActivityMainBinding binding;
     private final Handler mMain = new Handler(Looper.getMainLooper());
+    /** The exploit and the vault read: serialised, because a run must not overlap
+     *  another run and one reading must not race the next. */
     private final Executor mExec = Executors.newSingleThreadExecutor();
+    /** The GitHub update check holds its worker for 8 s connect plus 8 s read when
+     *  api.github.com is unreachable, which is every plain connection from a
+     *  mainland network. Sharing one worker with anything else made that hang
+     *  everyone's problem: this call now waits for itself. */
+    private final Executor mNetExec = Executors.newSingleThreadExecutor();
+    /** The SU-manager scan: every installed app's native lib dir, several hundred
+     *  directories and their ELF headers. Its own worker so a click on the card is
+     *  never queued behind the update check or a su call, and a background priority
+     *  so the popup's own animation does not have to fight it for a core. */
+    private final Executor mScanExec = Executors.newSingleThreadExecutor(
+            r -> new Thread(r, "df-manager-scan"));
     private final StringBuilder logBuffer = new StringBuilder();
     private File lastLogFile;
     private boolean running;
@@ -94,9 +107,27 @@ public class MainActivity extends Activity implements IReporter {
     private String suManagerPkg;
     private CharSequence suManagerLabel;
     /** The last full manager scan. Finding a ksud walks every installed app's
-     *  native lib dir and reads multi-MB binaries, which took seconds on the
-     *  main thread, so the result is cached and refreshed off-thread. */
+     *  native lib dir and reads multi-MB binaries, so the result is cached and the
+     *  click that opens the picker is served from it. The cache is refreshed at
+     *  resume - when a manager could have been installed or removed - and not on
+     *  every open: re-scanning under the popup's own entrance animation is what
+     *  read as a stutter. See startSuManagerScan. */
     private List<SuManagerEntry> suManagerCache;
+    /** True while a scan is in flight; the scan is one worker and one pass, so a
+     *  second click never queues a second one. Worker-written, main-thread-read,
+     *  so volatile rather than a race that happens to work. */
+    private volatile boolean suManagerScanRunning;
+    /** True when a scan is owed and has not been had yet. Set at resume - the only
+     *  moment the set of installed managers can have changed - and cleared by the
+     *  worker before each pass, so a resume that arrives mid-scan earns a second
+     *  pass instead of being lost. Same sharing, same reason. */
+    private volatile boolean suManagerScanWanted;
+    /** The picker while it is on screen, so a scan that finishes underneath it
+     *  refills it instead of leaving the owner staring at a list that is still
+     *  searching. Main thread only. */
+    private android.widget.PopupWindow suManagerPopup;
+    private android.widget.LinearLayout suManagerBox;
+    private int suManagerPopupX, suManagerPopupY, suManagerPopupW;
     /** A failed run locks the Run button until reboot (page-cache patch). */
     private boolean failedRun;
     /** Raw "***FAILED***: ..." text from the exploit, used for the failure log. */
@@ -497,7 +528,7 @@ public class MainActivity extends Activity implements IReporter {
             v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             openUrl("https://github.com/mitschud/DirtyFrag/releases");
         });
-        mExec.execute(this::checkForAppUpdate);
+        mNetExec.execute(this::checkForAppUpdate);
 
         // Recovery / download mode: the pill left of the menu button. Pressing it opens the card
         // of facts behind the dot - the verdict the bootloader will reach for a download-mode
@@ -1150,6 +1181,10 @@ public class MainActivity extends Activity implements IReporter {
     protected void onResume() {
         super.onResume();
         loadSuManagerPref();
+        // The list is refreshed here rather than under the finger: a manager can
+        // only have been installed or removed while the app was not looking, and a
+        // scan started now is finished long before the card is tapped.
+        startSuManagerScan();
         updateRunButton();
         startRootWatch();
     }
@@ -1280,7 +1315,7 @@ public class MainActivity extends Activity implements IReporter {
         applySuManagerSubtitle();
         if (suManagerPkg != null) {
             final String pkg = suManagerPkg;
-            mExec.execute(() -> {
+            mScanExec.execute(() -> {
                 boolean usable;
                 try {
                     usable = ExploitRunner.findKsud(
@@ -1310,38 +1345,142 @@ public class MainActivity extends Activity implements IReporter {
         updateRunButton();
     }
 
-    /** Opens the picker from the cached scan, refreshing it on a worker for the
-     *  next open. The first open has to wait for that scan, so it runs there
-     *  too instead of blocking the main thread. */
-    private void showSuManagerPopup() {
-        List<SuManagerEntry> cached = suManagerCache;
-        if (cached != null) {
-            buildSuManagerPopup(cached);
-            mExec.execute(() -> {
-                List<SuManagerEntry> fresh = scanSuManagers();
-                runOnUiThread(() -> suManagerCache = fresh);
-            });
-            return;
-        }
-        mExec.execute(() -> {
-            List<SuManagerEntry> fresh = scanSuManagers();
-            runOnUiThread(() -> {
-                suManagerCache = fresh;
-                buildSuManagerPopup(fresh);
-            });
+    /** Runs the manager scan when one is owed, one pass at a time. It is asked for
+     *  at resume, so the answer is normally in hand before the card is tapped; a
+     *  resume that lands while a pass is still running is answered by a second pass
+     *  rather than dropped. The worker runs at background priority because the cost
+     *  is every installed app's native lib dir plus their ELF headers, and this is a
+     *  phone with a UI to animate. */
+    private void startSuManagerScan() {
+        suManagerScanWanted = true;
+        if (suManagerScanRunning) return;
+        suManagerScanRunning = true;
+        mScanExec.execute(() -> {
+            android.os.Process.setThreadPriority(
+                    android.os.Process.THREAD_PRIORITY_BACKGROUND);
+            try {
+                while (suManagerScanWanted) {
+                    suManagerScanWanted = false;
+                    final List<SuManagerEntry> fresh = scanSuManagers();
+                    mMain.post(() -> {
+                        suManagerCache = fresh;
+                        refillSuManagerPopup();
+                    });
+                }
+            } finally {
+                // An exception here must not leave the flag set: that would quiet
+                // the scanner for the rest of the process.
+                suManagerScanRunning = false;
+            }
+            if (suManagerScanWanted) startSuManagerScan();
         });
+    }
+
+    /** Opens the picker straight from the cache. An owner who beats the first scan
+     *  to the card sees what it is doing, and the rows replace themselves when it
+     *  lands. */
+    private void showSuManagerPopup() {
+        if (suManagerCache == null) startSuManagerScan();
+        buildSuManagerPopup(suManagerCache);
+    }
+
+    /** Replaces the rows of a picker that is already open with a scan that has just
+     *  landed. A PopupWindow takes its size at show time and does not grow on its
+     *  own, so the window is updated with the new measured height. */
+    private void refillSuManagerPopup() {
+        if (suManagerPopup == null || suManagerBox == null) return;
+        fillSuManagerRows(suManagerBox, suManagerCache);
+        // Measured at the width the window really has: rows whose package name
+        // wraps are what changes height between two fills, and an unconstrained
+        // measure would lay them out wider than the popup and come back short.
+        suManagerBox.measure(
+                View.MeasureSpec.makeMeasureSpec(suManagerPopupW, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.UNSPECIFIED);
+        suManagerPopup.update(suManagerPopupX, suManagerPopupY, suManagerPopupW,
+                suManagerBox.getMeasuredHeight());
     }
 
     /** OneUI-style rounded popup list over the dim overlay - same look and feel
      *  as the overflow menu, so the picker does not look like a stock spinner. */
     private void buildSuManagerPopup(List<SuManagerEntry> apps) {
         float md = getResources().getDisplayMetrics().density;
-        final android.widget.PopupWindow[] pwRef = {null};
 
         android.widget.LinearLayout box = new android.widget.LinearLayout(this);
         box.setOrientation(android.widget.LinearLayout.VERTICAL);
         box.setBackgroundResource(R.drawable.popup_bg);
         box.setPadding(0, (int) (6 * md), 0, (int) (6 * md));
+        fillSuManagerRows(box, apps);
+
+        box.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        int cardW = binding.cardSuManager.getWidth();
+        int pw_w = cardW > 0 ? cardW : Math.max(box.getMeasuredWidth(), (int) (240 * md));
+
+        final android.widget.PopupWindow pw = new android.widget.PopupWindow(box,
+                pw_w, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        pw.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
+                android.graphics.Color.TRANSPARENT));
+        pw.setOutsideTouchable(true);
+        pw.setOnDismissListener(() -> {
+            suManagerPopup = null;
+            suManagerBox = null;
+            binding.dimOverlay.animate().alpha(0f).setDuration(150)
+                    .withEndAction(() -> binding.dimOverlay
+                            .setVisibility(View.GONE)).start();
+        });
+
+        box.setOutlineProvider(new android.view.ViewOutlineProvider() {
+            @Override
+            public void getOutline(View view, android.graphics.Outline outline) {
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), 26 * md);
+            }
+        });
+        box.setClipToOutline(true);
+        box.setElevation(48 * md);
+
+        int[] loc = new int[2];
+        binding.cardSuManager.getLocationOnScreen(loc);
+        // Centered, NOT card-anchored: the popup is exactly card-wide and the
+        // card sits 16dp from each edge, so half the leftover IS the card's own
+        // margin. Anchoring to the card's left + 16dp pushed the popup 16dp
+        // right, which read as off-centre and clipped its right edge.
+        suManagerPopupX = (getResources().getDisplayMetrics().widthPixels - pw_w) / 2;
+        suManagerPopupY = loc[1] + binding.cardSuManager.getHeight() + (int) (4 * md);
+        suManagerPopupW = pw_w;
+        suManagerPopup = pw;
+        suManagerBox = box;
+        binding.dimOverlay.setVisibility(View.VISIBLE);
+        binding.dimOverlay.setAlpha(0f);
+        binding.dimOverlay.animate().alpha(0.5f).setDuration(150).start();
+        box.setPivotX(0f);
+        box.setPivotY(0f);
+        box.setScaleX(0.9f);
+        box.setScaleY(0.9f);
+        box.setAlpha(0f);
+        pw.showAtLocation(binding.cardSuManager,
+                android.view.Gravity.TOP | android.view.Gravity.START,
+                suManagerPopupX, suManagerPopupY);
+        box.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(150)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                .start();
+    }
+
+    /** The picker's rows. A null list means the first scan has not landed yet, and
+     *  says so - an empty list here would read as "no manager is installed", which
+     *  is a different and much worse claim. */
+    private void fillSuManagerRows(android.widget.LinearLayout box, List<SuManagerEntry> apps) {
+        float md = getResources().getDisplayMetrics().density;
+        box.removeAllViews();
+
+        if (apps == null) {
+            TextView busy = new TextView(this);
+            busy.setText(R.string.su_manager_scanning);
+            busy.setGravity(android.view.Gravity.CENTER_VERTICAL | android.view.Gravity.START);
+            busy.setPadding((int) (20 * md), (int) (12 * md), (int) (20 * md), (int) (12 * md));
+            busy.setTextColor(0xFF6E6E6E);
+            busy.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
+            box.addView(busy);
+            return;
+        }
 
         if (apps.isEmpty()) {
             TextView none = new TextView(this);
@@ -1390,57 +1529,11 @@ public class MainActivity extends Activity implements IReporter {
             col.setOnClickListener(v2 -> {
                 v2.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
                 selectSuManager(e);
-                if (pwRef[0] != null) pwRef[0].dismiss();
+                if (suManagerPopup != null) suManagerPopup.dismiss();
             });
             box.addView(col, new android.widget.LinearLayout.LayoutParams(
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT, (int) (56 * md)));
         }
-
-        box.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
-        int cardW = binding.cardSuManager.getWidth();
-        int pw_w = cardW > 0 ? cardW : Math.max(box.getMeasuredWidth(), (int) (240 * md));
-
-        final android.widget.PopupWindow pw = new android.widget.PopupWindow(box,
-                pw_w, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true);
-        pw.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
-                android.graphics.Color.TRANSPARENT));
-        pw.setOutsideTouchable(true);
-        pwRef[0] = pw;
-        pw.setOnDismissListener(() ->
-                binding.dimOverlay.animate().alpha(0f).setDuration(150)
-                        .withEndAction(() -> binding.dimOverlay
-                                .setVisibility(View.GONE)).start());
-
-        box.setOutlineProvider(new android.view.ViewOutlineProvider() {
-            @Override
-            public void getOutline(View view, android.graphics.Outline outline) {
-                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), 26 * md);
-            }
-        });
-        box.setClipToOutline(true);
-        box.setElevation(48 * md);
-
-        int[] loc = new int[2];
-        binding.cardSuManager.getLocationOnScreen(loc);
-        // Centered, NOT card-anchored: the popup is exactly card-wide and the
-        // card sits 16dp from each edge, so half the leftover IS the card's own
-        // margin. Anchoring to the card's left + 16dp pushed the popup 16dp
-        // right, which read as off-centre and clipped its right edge.
-        int x = (getResources().getDisplayMetrics().widthPixels - pw_w) / 2;
-        int y = loc[1] + binding.cardSuManager.getHeight() + (int) (4 * md);
-        binding.dimOverlay.setVisibility(View.VISIBLE);
-        binding.dimOverlay.setAlpha(0f);
-        binding.dimOverlay.animate().alpha(0.5f).setDuration(150).start();
-        box.setPivotX(0f);
-        box.setPivotY(0f);
-        box.setScaleX(0.9f);
-        box.setScaleY(0.9f);
-        box.setAlpha(0f);
-        pw.showAtLocation(binding.cardSuManager,
-                android.view.Gravity.TOP | android.view.Gravity.START, x, y);
-        box.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(150)
-                .setInterpolator(new android.view.animation.DecelerateInterpolator())
-                .start();
     }
 
     /** Writes the DE pref that bootstrap.c reads as su_manager, then unlocks Run. */
