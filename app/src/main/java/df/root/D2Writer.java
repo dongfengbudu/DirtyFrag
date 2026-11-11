@@ -61,7 +61,7 @@ final class D2Writer {
 
     /** What the vault said, or why we could not ask. */
     static final class Vault {
-        /** True when a DFD2 verdict came back, so the three bytes below are the vault's. */
+        /** True only when the DFD2 line carried all three bytes; error states stay false. */
         final boolean ok;
         /** The harness state: authorized, written, cleared, read-failed, ... */
         final String state;
@@ -185,7 +185,8 @@ final class D2Writer {
 
         Vault parsed = parse(out.toString());
         // su answered without the harness ever running: nearly always a refused grant.
-        return parsed.ok ? parsed : new Vault(false, parsed.state, -1, -1, -1, clip(out));
+        return parsed.ok ? parsed : new Vault(false, parsed.state,
+                parsed.atCommand, parsed.lock, parsed.maintenance, clip(out));
     }
 
     /**
@@ -211,7 +212,14 @@ final class D2Writer {
                     // A byte this firmware will not explain stays -1: unknown, never guessed.
                 }
             }
-            if (!state.isEmpty()) return new Vault(true, state, at, lock, maint, output.trim());
+            // A state line is not a verdict: class-missing, error, no-vault,
+            // read-failed and unsupported all print one without the three bytes.
+            // Only a line carrying every byte may be treated as an answer.
+            if (!state.isEmpty()) {
+                boolean bytesKnown = at >= 0 && lock >= 0 && maint >= 0
+                        && at <= 1 && lock <= 1 && maint <= 1;
+                return new Vault(bytesKnown, state, at, lock, maint, output.trim());
+            }
         }
         String trimmed = output.trim();
         String first = trimmed.isEmpty() ? "" : trimmed.split("\n")[0];

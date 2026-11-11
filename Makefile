@@ -31,12 +31,14 @@ SIGN_ALIAS := dirtyfrag
 LKM_SRCS    := lkm/dfroot.c lkm/Makefile
 LKM_KOS     := $(KMIS:%=app/src/main/jni/ko/dfroot-%.ko)
 APK_SRCS    := $(wildcard app/src/main/java/df/root/*.java \
+                               app/src/main/java/df/d2/*.java \
                                app/src/main/jni/*.c app/src/main/jni/*.h \
                                app/src/main/jni/*.S app/src/main/jni/*.inc \
-                               app/src/main/res/layout/*.xml \
-                               app/src/main/res/values/*.xml) \
+                               app/src/main/res/*/*.xml \
+                               app/src/main/res/font/*.ttf) \
                    app/src/main/AndroidManifest.xml \
                    app/build.gradle.kts \
+                   app/proguard-rules.pro \
                    app/src/main/jni/CMakeLists.txt
 APK   := out/dirtyfrag.apk
 
@@ -82,7 +84,7 @@ $(APK): app/keystore.jks $(LKM_KOS) $(APK_SRCS)
 clean:
 	rm -f app/src/main/jni/splicehelper
 	rm -f lkm/*.o lkm/*.cmd lkm/.*.cmd lkm/*.mod lkm/*.mod.c lkm/*.lto.o lkm/modules.order lkm/Module.symvers lkm/dfroot.lds lkm/dfroot.ko
-	rm -rf app/src/main/jni/ko
+	# The eight dfroot-*.ko are committed (see README); clean must not delete them.
 	rm -f .project app/.project app/.classpath
 	rm -rf .settings app/.settings
 	rm -rf build out app/.cxx app/build .gradle

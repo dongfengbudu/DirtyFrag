@@ -9,8 +9,6 @@ import android.content.pm.PackageManager;
 import android.os.PowerManager;
 import android.util.Log;
 
-import java.io.File;
-
 /**
  * Auto-root on boot. Safety rules learned in the field:
  *  - A failed run disables the receiver; the user re-enables it in the app.
@@ -33,8 +31,8 @@ public class BootReceiver extends BroadcastReceiver implements IReporter {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        if (new File("/dev/df").exists()) {
-            Log.i(TAG, "boot: already hooked, skipping");
+        if (ExploitRunner.isRooted()) {
+            Log.i(TAG, "boot: already rooted, skipping");
             return;
         }
         Log.i(TAG, "boot: " + intent.getAction());
@@ -57,17 +55,18 @@ public class BootReceiver extends BroadcastReceiver implements IReporter {
 
         PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
         PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "dfroot:boot");
-        wl.acquire();
+        // A boot-time run that never returns must not pin the wakelock forever.
+        wl.acquire(10 * 60 * 1000L);
         new Thread(() -> {
             boolean ok = false;
             try {
                 int rc = ExploitRunner.run(deCtx, this);
                 Log.i(TAG, "boot: exploit rc=" + rc);
-                ok = rc == 0;
+                ok = rc == 0 && ExploitRunner.isRooted();
             } catch (Exception e) {
                 Log.e(TAG, "boot: exploit exception", e);
             } finally {
-                wl.release();
+                if (wl.isHeld()) wl.release();
             }
             // The download-mode byte is per boot, and the only thing that can write it is the su
             // this run just put back, so re-arming belongs here and nowhere earlier.

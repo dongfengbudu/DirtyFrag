@@ -29,7 +29,12 @@ android {
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("keystore")
+            // A clean checkout has no release keystore. Fall back to AGP's
+            // default debug key in that case, so local and pull-request debug
+            // builds do not need the release secret.
+            if (file("keystore.jks").exists()) {
+                signingConfig = signingConfigs.getByName("keystore")
+            }
         }
         release {
             signingConfig = signingConfigs.getByName("keystore")
@@ -42,14 +47,6 @@ android {
         }
     }
 
-// AGP 9 removed the old applicationVariants API; this is the replacement.
-androidComponents {
-    onVariants { variant ->
-        variant.outputs.forEach { output ->
-            output.outputFileName.set("dirtyfrag.apk")
-        }
-    }
-}
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -77,6 +74,15 @@ androidComponents {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+        }
+    }
+}
+
+// AGP 9 removed the old applicationVariants API; this is the replacement.
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            output.outputFileName.set("dirtyfrag.apk")
         }
     }
 }

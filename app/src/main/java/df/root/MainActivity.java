@@ -126,7 +126,7 @@ public class MainActivity extends Activity implements IReporter {
     /** A failed run locks the Run button until reboot (page-cache patch). */
     private boolean failedRun;
     /** Raw "***FAILED***: ..." text from the exploit, used for the failure log. */
-    private String lastFailReason;
+    private volatile String lastFailReason;
 
     // ---- Movable card stack (VIS1 - VIS5) -----------------------------------
 
@@ -142,6 +142,8 @@ public class MainActivity extends Activity implements IReporter {
     private final List<String> hiddenCards = new ArrayList<>();
     /** True while a drag has the scrollable log blacked out (VIS2.1). */
     private boolean logHiddenForDrag;
+    /** Whether the advanced-log switch was on when the current drag started. */
+    private boolean logWasOnBeforeDrag;
     /** True while the log is allowed on screen at all: the advanced-log switch
      *  is on, there is a run to show and the advanced-log card is not collapsed.
      *  Composed with {@link #logHiddenForDrag} into one fade (VIS2.1/VIS4). */
@@ -159,6 +161,13 @@ public class MainActivity extends Activity implements IReporter {
     @Override
     public void report(String msg) {
         Log.i(TAG, msg.trim());
+        // Keep the failure reason off the main-thread queue: runExploit() reads it
+        // on the executor as soon as the native process exits, before the posted
+        // UI work below is guaranteed to have run.
+        for (String line : msg.split("\n", -1)) {
+            int err = line.indexOf("ERROR - ");
+            if (err >= 0) lastFailReason = line.substring(err + "ERROR - ".length()).trim();
+        }
         mMain.post(() -> {
             // Drive the two-step progress bar from the raw (unfiltered) lines.
             for (String line : msg.split("\n", -1)) {
@@ -603,7 +612,7 @@ public class MainActivity extends Activity implements IReporter {
             }
         });
 
-        if (new File("/dev/df").exists()) {
+        if (ExploitRunner.isRooted()) {
             setRootedState();
         }
 
@@ -617,7 +626,8 @@ public class MainActivity extends Activity implements IReporter {
             lastLogFile.delete();
             createDeviceProtectedStorageContext()
                     .getSharedPreferences("dfroot", MODE_PRIVATE)
-                    .edit().putBoolean("last_run_success", false).apply();
+                    .edit().putBoolean("last_run_success", false)
+                    .remove("failed_run").remove("failed_run_boot").apply();
         }
         String last = readLastLog();
         boolean hasLastLog = !last.isEmpty();
@@ -647,17 +657,23 @@ public class MainActivity extends Activity implements IReporter {
 
         // Restore the simple status for the current state: rooted device or a
         // successful last run -> 100% + Verified; failed run -> Failed.
-        boolean rootedNow = new File("/dev/df").exists();
+        boolean rootedNow = ExploitRunner.isRooted();
+        SharedPreferences statusPrefs = createDeviceProtectedStorageContext()
+                .getSharedPreferences("dfroot", MODE_PRIVATE);
         boolean lastSuccess = hasLastLog
-                && createDeviceProtectedStorageContext()
-                        .getSharedPreferences("dfroot", MODE_PRIVATE)
-                        .getBoolean("last_run_success", false);
-        boolean lastFailed = hasLastLog
-                && last.toLowerCase().contains("=== exploit failed");
-        if (rootedNow || lastSuccess) {
+                && statusPrefs.getBoolean("last_run_success", false);
+        boolean failedBefore = statusPrefs.getBoolean("failed_run", false)
+                && statusPrefs.getInt("failed_run_boot", -1) == bootCount();
+        if (!failedBefore && statusPrefs.contains("failed_run")) {
+            statusPrefs.edit().remove("failed_run").remove("failed_run_boot").apply();
+        }
+        String lowerLog = last.toLowerCase(java.util.Locale.ROOT);
+        boolean lastFailed = failedBefore || (hasLastLog && lowerLog.contains("exploit failed"));
+        boolean hookStuck = ExploitRunner.hookFired() && !rootedNow;
+        if (rootedNow || (lastSuccess && !lastFailed && !hookStuck)) {
             binding.twoStep.setSeg1(1f, "100%");
             binding.twoStep.setSeg2(1f, getString(R.string.progress_verified), 0xFFFFFFFF);
-        } else if (lastFailed) {
+        } else if (lastFailed || hookStuck) {
             setFailedState();
         }
 
@@ -721,7 +737,6 @@ public class MainActivity extends Activity implements IReporter {
         binding.btnMenu.setOnClickListener(v -> {
             v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             float md = getResources().getDisplayMetrics().density;
-            boolean rootedMenu = new File("/dev/df").exists();
             final android.widget.PopupWindow[] pwRef = {null};
 
             android.widget.LinearLayout box = new android.widget.LinearLayout(this);
@@ -941,6 +956,7 @@ public class MainActivity extends Activity implements IReporter {
                 // a card up now puts the advanced log away. The thumb flips off
                 // while the card is still in the hand, and the log is turned back
                 // on once the card is where it belongs.
+                logWasOnBeforeDrag = advancedLog;
                 if (advancedLog) setAdvancedLog(false);
                 setLogHiddenForDrag(true);
                 setAcceptOverlay(false);
@@ -961,6 +977,10 @@ public class MainActivity extends Activity implements IReporter {
             @Override
             public void onCardDropped(View card, boolean moved) {
                 setLogHiddenForDrag(false);
+                if (logWasOnBeforeDrag) {
+                    logWasOnBeforeDrag = false;
+                    setAdvancedLog(true);
+                }
                 setAcceptOverlay(true);
                 placeHideButton(card);
                 followBadgeDuringSettle(card);
@@ -969,6 +989,10 @@ public class MainActivity extends Activity implements IReporter {
 
             @Override
             public void onCardSelectionCleared() {
+                if (logWasOnBeforeDrag) {
+                    logWasOnBeforeDrag = false;
+                    setAdvancedLog(true);
+                }
                 setAcceptOverlay(false);
                 hideAllHideButtons();
             }
@@ -1373,11 +1397,14 @@ public class MainActivity extends Activity implements IReporter {
         });
     }
 
-    /** The scan list and its timestamp, as JSON in the same DE prefs file
-     *  bootstrap.c reads. Credential-protected storage would hold it fine too,
-     *  but this file is already the app's one cross-process truth and it is
-     *  device-encrypted; a stale manager list is worth a fast open, not a
-     *  fresh one. */
+    /** UI-only prefs; bootstrap.c parses dfroot.xml, so keep UI data out of it. */
+    private SharedPreferences uiPrefs() {
+        return mDeCtx.getSharedPreferences("dfroot_ui", MODE_PRIVATE);
+    }
+
+    /** The scan list and its timestamp, as JSON in the UI-only prefs file.
+     *  bootstrap.c parses dfroot.xml with a fixed buffer, so this data must not
+     *  live there. A stale manager list is worth a fast open, not a fresh one. */
     private void persistSuManagerCache(List<SuManagerEntry> entries) {
         try {
             org.json.JSONArray arr = new org.json.JSONArray();
@@ -1385,7 +1412,7 @@ public class MainActivity extends Activity implements IReporter {
                 arr.put(new org.json.JSONObject()
                         .put("pkg", e.packageName).put("label", e.label.toString()));
             }
-            mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE).edit()
+            uiPrefs().edit()
                     .putString("su_manager_list", arr.toString())
                     .putLong("su_manager_list_at", System.currentTimeMillis())
                     .apply();
@@ -1397,8 +1424,13 @@ public class MainActivity extends Activity implements IReporter {
     /** Fills the in-memory cache from the last persisted scan, so the picker has
      *  a real list before this process has scanned anything. */
     private void restoreSuManagerCache() {
-        String json = mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE)
-                .getString("su_manager_list", null);
+        // Older builds stored this cache in dfroot.xml; drop it from the file
+        // bootstrap.c parses so a legacy list cannot sit in front of su_manager.
+        SharedPreferences legacy = mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE);
+        if (legacy.contains("su_manager_list")) {
+            legacy.edit().remove("su_manager_list").remove("su_manager_list_at").apply();
+        }
+        String json = uiPrefs().getString("su_manager_list", null);
         if (json == null) return;
         try {
             org.json.JSONArray arr = new org.json.JSONArray(json);
@@ -1597,8 +1629,7 @@ public class MainActivity extends Activity implements IReporter {
 
         // Footer: how old the list is, then the manual rescan. A scan already
         // running greys the row out rather than queueing a second pass.
-        long at = mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE)
-                .getLong("su_manager_list_at", 0L);
+        long at = uiPrefs().getLong("su_manager_list_at", 0L);
         if (at != 0L && !suManagerScanRunning) {
             TextView when = new TextView(this);
             when.setText(getString(R.string.su_manager_last_scan,
@@ -1644,17 +1675,25 @@ public class MainActivity extends Activity implements IReporter {
 
     /** Run needs a manager selected, no failed-run lock and no existing root. */
     private boolean canRun() {
-        return suManagerPkg != null && !failedRun && !new File("/dev/df").exists();
+        return suManagerPkg != null && !failedRun && !ExploitRunner.isRooted()
+                && !ExploitRunner.hookFired();
     }
 
     /** Single place that decides the Run pill's look and enabled state. */
     private void updateRunButton() {
         if (running) return;
-        if (new File("/dev/df").exists()) {
+        if (ExploitRunner.isRooted()) {
             setRootedState(true);
             return;
         }
         if (failedRun) {
+            setFailedState();
+            return;
+        }
+        if (ExploitRunner.hookFired()) {
+            // The hook fired but the module never loaded. A second run cannot
+            // re-enter it; show the reboot-required failure state instead of a
+            // grey Run pill that would fail the same way.
             setFailedState();
             return;
         }
@@ -1851,6 +1890,13 @@ public class MainActivity extends Activity implements IReporter {
         // the activity was still being built would otherwise see the flag as unset and skip a write
         // the owner did ask for.
         if (!sp.getBoolean("expert_mode", false) || !sp.getBoolean(PREF_D2_AUTO, false)) return v;
+        if (v != null && !v.ok) {
+            // A failed read is not permission to write. Keep the failure as the
+            // answer for this root instead of spending another su prompt on the
+            // same unreadable vault.
+            mAutorunTried = true;
+            return v;
+        }
         if (v != null && v.ok && v.atCommand == 1) return v;
         mAutorunTried = true;
         // Both sinks, the way a press does it. The run log is the artifact the owner can read back
@@ -2768,36 +2814,48 @@ public class MainActivity extends Activity implements IReporter {
         // there eventually. A lost write is a run that silently does not reboot.
         SharedPreferences sp = mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE);
         boolean autoSoftReboot = sp.getBoolean("auto_soft_reboot", false);
-        sp.edit().putBoolean("soft_reboot", autoSoftReboot).commit();
+        sp.edit().putBoolean("soft_reboot", autoSoftReboot)
+                .putBoolean("failed_run", false)
+                .remove("failed_run_boot")
+                .commit();
         // Last boot's verdict is not this run's answer.
         softRebootReportFile().delete();
         lastFailReason = null;
         boolean wantSoftRebootReport = false;
+        boolean success = false;
         try {
             int rc = ExploitRunner.run(mDeCtx, this);
-            if (rc != 0) {
+            success = rc == 0 && ExploitRunner.isRooted();
+            if (!success) {
                 // 0 ok, 1 ksud/bootstrap error, 2 poll timeout or bad setup,
-                // 3 failed to patch files (see exp.c markers[]).
+                // 3 failed to patch files, 4 hook fired without root.
                 String why = lastFailReason != null ? lastFailReason
                         : rc == 1 ? "ksud nonzero exit"
                         : rc == 2 ? "check logcat & dmesg"
+                        : rc == 4 ? "hook fired but root was not established; reboot required"
                         : "failed to patch files";
                 report("\n=== exploit failed: " + why + " ===\n");
             }
-            wantSoftRebootReport = rc == 0 && autoSoftReboot;
-            mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE)
-                    .edit().putBoolean("last_run_success", rc == 0).apply();
+            wantSoftRebootReport = success && autoSoftReboot;
         } catch (Exception e) {
             Log.e(TAG, "exploit exception", e);
             report("\nexception: " + e + "\n");
         } finally {
+            final boolean runOk = success;
             mMain.post(() -> {
                 running = false;
-                boolean rooted = new File("/dev/df").exists();
-                if (rooted) {
+                boolean rooted = ExploitRunner.isRooted();
+                SharedPreferences store = mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE);
+                if (rooted && runOk) {
+                    store.edit().putBoolean("last_run_success", true)
+                            .putBoolean("failed_run", false)
+                            .remove("failed_run_boot").apply();
                     setRootedState(true);
                     binding.twoStep.setSeg2(1f, getString(R.string.progress_verified), 0xFFFFFFFF);
                 } else {
+                    store.edit().putBoolean("last_run_success", false)
+                            .putBoolean("failed_run", true)
+                            .putInt("failed_run_boot", bootCount()).apply();
                     setFailedState();
                     setRootedState(false);
                 }
@@ -2806,7 +2864,7 @@ public class MainActivity extends Activity implements IReporter {
                 // vault behind it, and the download-mode verdict is that read. The root watch sees
                 // the same transition a beat later; asking now is what keeps the pill from
                 // describing a boot that ended minutes ago.
-                if (rooted) mExec.execute(MainActivity.this::refreshRecovery);
+                if (rooted && runOk) mExec.execute(MainActivity.this::refreshRecovery);
             });
             // The soft-reboot verdict arrives seconds after the run that asked
             // for it, and it waits on its own thread rather than on mExec: that

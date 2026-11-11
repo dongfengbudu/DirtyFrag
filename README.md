@@ -110,6 +110,9 @@ keytool -genkeypair -v -keystore app/keystore.jks -alias dirtyfrag \
   -storepass dirtyfrag -keypass dirtyfrag
 ```
 
+Debug builds use that key when it exists and otherwise fall back to AGP's default debug key, so
+`./gradlew assembleDebug` works on a clean checkout without the release keystore.
+
 The eight prebuilt kernel modules are committed under `app/src/main/jni/ko/`. Upstream gitignores
 them and builds them per-KMI in CI; this fork commits them so a plain clone builds without a DDK
 toolchain. They are built by this repo's `Build` workflow (the `LKMs / <kmi>` jobs) from the

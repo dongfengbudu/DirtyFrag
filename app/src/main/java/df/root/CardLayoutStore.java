@@ -10,8 +10,8 @@ import java.util.List;
 /**
  * Where the movable card stack keeps its state: a device-protected prefs file
  * of its own, dfroot_ui. It must NOT go into dfroot.xml - bootstrap.c parses
- * that file with a 4 KB buffer and a naive strstr, so nothing that only the UI
- * reads may be added to it.
+ * that file with a 64 KB buffer and a naive strstr, so nothing that only the UI
+ * reads may be added to it. The SU-manager cache lives here too.
  *
  * Two keys, both comma separated and both tiny:
  *   card_order   "sumanager,autorun,modules,log"

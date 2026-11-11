@@ -1,4 +1,5 @@
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -240,7 +241,7 @@ static int disable_modules(void)
 {
     DIR *dir = opendir(MODULES_DIR);
     if (!dir)
-        return -1;
+        return errno == ENOENT ? 0 : -1;
 
     struct dirent *ent;
     while ((ent = readdir(dir))) {

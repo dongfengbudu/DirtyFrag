@@ -587,7 +587,8 @@ static int exploit(void) {
     };
     int seen[sizeof(markers)/sizeof(markers[0])] = {0};
 
-    for (int elapsed = 0; elapsed < 10000; elapsed += 10) {
+    /* 7000 * 10 ms = the 70 s window the UI and README promise. */
+    for (int elapsed = 0; elapsed < 70000; elapsed += 10) {
         usleep(10000);
         for (size_t j = 0; j < sizeof(markers)/sizeof(markers[0]); j++) {
             if (!seen[j] && access(markers[j].path, F_OK) == 0) {

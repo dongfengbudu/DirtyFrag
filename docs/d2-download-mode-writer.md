@@ -1,9 +1,9 @@
 # Getting Odin back without maintenance mode: writing the DMC `at_command` flag
 
-Status quo: `app/src/main/java/df/root/D2Status.java` computes the verdict from the two
-vault inputs an app can read (lock-screen credential, maintenance mode) and *assumes*
-`at_command = 0`. This document is about the other half: actually setting that byte, on a
-device that is rooted after the fact, with no system-app privileges.
+Status quo: `app/src/main/java/df/root/D2Status.java` reads the two public inputs an app
+can see (lock-screen credential, maintenance mode); it does not guess `at_command`.
+`D2Writer` is the half that asks the vendor vault through `su` and, when asked, sets that
+byte, on a device that is rooted after the fact and without system-app privileges.
 
 ## What the flag is
 
@@ -77,6 +77,9 @@ signed. Gate 2 opens with a KernelSU module's `sepolicy.rule`, which can grant o
 `find` on the vaultkeeper service and a binder channel to it. The process itself can be a
 tiny `app_process` (present as `app_process64`) that loads the hidden `VaultKeeperManager`
 off the system classpath - `cat /proc/$(pidof system_server)/environ` exposes the exact
+`SYSTEMSERVERCLASSPATH` to use. It fails if the service additionally demands that the
+caller really is system_server, for instance by touching
+`ActivityThread.currentApplication()` or by checking something only the real service holds.
 
 **C. Speak to the vendor vaultkeeper HAL / trustlet directly.** Native, no Android
 permission at all, and SELinux is again ours to widen with module rules. Highest cost: the
@@ -191,7 +194,3 @@ candidate A is taken up, read that file's terms rather than assuming the project
 
 `tools/d2-probe.sh` pushes the on-device probe, runs it through `su` and saves the log.
 Neither script writes to the vault - everything here is a read.
-
-`SYSTEMSERVERCLASSPATH` to use. It fails if the service additionally demands that the
-caller really is system_server, for instance by touching
-`ActivityThread.currentApplication()` or by checking something only the real service holds.
