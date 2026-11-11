@@ -125,7 +125,9 @@ public class MainActivity extends Activity implements IReporter {
     private int suManagerPopupX, suManagerPopupY, suManagerPopupW;
     /** A failed run locks the Run button until reboot (page-cache patch). */
     private boolean failedRun;
-    /** Raw "***FAILED***: ..." text from the exploit, used for the failure log. */
+    /** The text after the exploit's last "ERROR - " marker, used for the failure
+     *  log. Written on the reporting thread rather than in the posted UI work,
+     *  so the run that just ended can name its failure before the queue drains. */
     private volatile String lastFailReason;
 
     // ---- Movable card stack (VIS1 - VIS5) -----------------------------------
@@ -620,9 +622,10 @@ public class MainActivity extends Activity implements IReporter {
         // A log saved before the current boot is stale: delete it so a reboot
         // always starts with a clean screen (log + share icon hidden).
         lastLogFile = new File(createDeviceProtectedStorageContext().getFilesDir(), "last_run.log");
+        int bootNow = bootCount();
         int savedBoot = createDeviceProtectedStorageContext()
                 .getSharedPreferences("dfroot", MODE_PRIVATE).getInt("log_boot_count", -1);
-        if (lastLogFile.exists() && savedBoot != bootCount()) {
+        if (lastLogFile.exists() && savedBoot != bootNow) {
             lastLogFile.delete();
             createDeviceProtectedStorageContext()
                     .getSharedPreferences("dfroot", MODE_PRIVATE)
@@ -662,8 +665,12 @@ public class MainActivity extends Activity implements IReporter {
                 .getSharedPreferences("dfroot", MODE_PRIVATE);
         boolean lastSuccess = hasLastLog
                 && statusPrefs.getBoolean("last_run_success", false);
-        boolean failedBefore = statusPrefs.getBoolean("failed_run", false)
-                && statusPrefs.getInt("failed_run_boot", -1) == bootCount();
+        // -1 means the boot count could not be read for one of the two writes.
+        // It must never match a stored -1, or a failure lock would outlive the
+        // reboot it exists to scope.
+        boolean failedBefore = bootNow != -1
+                && statusPrefs.getBoolean("failed_run", false)
+                && statusPrefs.getInt("failed_run_boot", -1) == bootNow;
         if (!failedBefore && statusPrefs.contains("failed_run")) {
             statusPrefs.edit().remove("failed_run").remove("failed_run_boot").apply();
         }
@@ -2853,9 +2860,16 @@ public class MainActivity extends Activity implements IReporter {
                     setRootedState(true);
                     binding.twoStep.setSeg2(1f, getString(R.string.progress_verified), 0xFFFFFFFF);
                 } else {
-                    store.edit().putBoolean("last_run_success", false)
-                            .putBoolean("failed_run", true)
-                            .putInt("failed_run_boot", bootCount()).apply();
+                    SharedPreferences.Editor failed = store.edit()
+                            .putBoolean("last_run_success", false)
+                            .putBoolean("failed_run", true);
+                    // Only a count that was actually read may scope the lock to
+                    // this boot; storing the -1 sentinel would let the failure
+                    // match an unreadable count on a later boot.
+                    int failedBoot = bootCount();
+                    if (failedBoot != -1) failed.putInt("failed_run_boot", failedBoot);
+                    else failed.remove("failed_run_boot");
+                    failed.apply();
                     setFailedState();
                     setRootedState(false);
                 }

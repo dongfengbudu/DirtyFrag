@@ -187,8 +187,10 @@ Based on upstream DFRoot 4.5 (upstream 4.2 - 4.5 merged into this fork).
 ### App
 - The run banner in the advanced log opens with `app version:`, so a pasted log says which build produced
   it; it reads the same `BuildConfig.VERSION_NAME` the header used to carry.
-- `run()` is `synchronized` and returns early when `/dev/df` already exists, so the boot autorun racing a
-  manual tap no longer re-hooks over the first run and corrupts it.
+- `run()` is `synchronized` and returns early when this boot already has root (`/dev/dfm6`), so the boot
+  autorun racing a manual tap no longer re-hooks over the first run and corrupts it. `/dev/df` - the
+  shellcode's one-shot mutex - is no longer read as "rooted": a hook that fired without a module behind it
+  now reports that a reboot is required instead of a success.
 - The manager check became a `hasKsud()` helper, which tests `nativeLibraryDir` for null first.
 - The interface keeps its own scale. Every measurement in it belongs to one screen width in dp - the Run
   pill is 48% of its parent minus a fixed 66dp, the toolbar and the 54dp circles are fixed dp holding sp
